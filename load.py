@@ -1,5 +1,10 @@
-class Data:
+from collections import defaultdict
 
+from torch.utils.data import Dataset
+from  torch import tensor
+import numpy as np
+
+class Data:
     def __init__(self, data_dir="data/FB15k-237/", reverse=False):
         self.train_data = self.load_data(data_dir, "train", reverse=reverse)
         self.valid_data = self.load_data(data_dir, "valid", reverse=reverse)
@@ -28,3 +33,40 @@ class Data:
     def get_entities(self, data):
         entities = sorted(list(set([d[0] for d in data]+[d[2] for d in data])))
         return entities
+
+class KG_dataset(Dataset):
+    def __init__(self, data, entity_vocab, relations_vocab):
+        self.data = data
+        self.data_index = [(entity_vocab[self.data[i][0]], relations_vocab[self.data[i][1]],
+                      entity_vocab[self.data[i][2]]) for i in range(len(self.data))]
+        self.entity_relation_vocab = defaultdict(list) # dict of objects, which corresponds to given pair of subject and relation
+        for triplet in self.data_index:
+            self.entity_relation_vocab[(triplet[0], triplet[1])].append(triplet[2])
+        self.entity_relation_pairs = list(self.entity_relation_vocab.keys()) # features for model
+        self.size = (len(self.entity_relation_pairs), len(entity_vocab), len(relations_vocab))
+
+
+    def __len__(self):
+        return self.size[0]
+
+
+    def _construct_targets(self, features):
+        entity_id = features[0]
+        relation_idx = features[1]
+        targets = np.zeros((len(features), len(features), self.size[1]))
+        for i, ent_id in enumerate(entity_id):
+            for j, rel_id in enumerate(relation_idx):
+                targets[i, j, self.entity_relation_vocab[(ent_id, rel_id)]] = 1
+        return targets
+
+
+    def __getitem__(self, idx):
+        features = self.entity_relation_pairs[idx]
+        # targets = self._construct_targets(features)
+        targets = np.zeros(self.size[1])
+        targets[self.entity_relation_vocab[features]] = 1
+        # for i, pair in enumerate(features):
+        #     targets[i, self.entity_relation_vocab[pair]] = 1
+        #     ones in potions, where relation is present
+        return tensor(features), targets
+
