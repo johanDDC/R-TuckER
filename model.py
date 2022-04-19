@@ -11,6 +11,35 @@ from tucker_riemopt.riemopt import compute_gradient_projection
 from tucker_riemopt import backend
 
 
+def MRR_metrics(predictions, targets):
+    _, idx = torch.sort(predictions, dim=1, descending=True)
+    targets_sorted = targets.gather(1, idx)
+    ranks = targets_sorted.argmax(1) + 1
+    mrr = torch.mean(1 / ranks)
+    return mrr
+
+
+def hits_k_metrics(predictions, targets, k = 1):
+    _, idx = torch.sort(predictions, dim=1, descending=True)
+    targets_sorted = targets.gather(1, idx)
+    hits = targets_sorted[:, :k].sum(1).float()
+    hits[hits > 1] = 1
+    return torch.mean(hits)
+
+
+def compute_metrics(predictions, targets, ks):
+    _, idx = torch.sort(predictions, dim=1, descending=True)
+    targets_sorted = targets.gather(1, idx)
+    ranks = targets_sorted.argmax(1) + 1
+    metrics = dict()
+    metrics["mrr"] = torch.mean(1 / ranks)
+    for k in ks:
+        hits = targets_sorted[:, :k].sum(1).float()
+        hits[hits > 1] = 1
+        metrics["hits_" + str(k)] = torch.mean(hits)
+    return metrics
+
+
 class R_TuckER(torch.nn.Module):
     def __init__(self, data_count, embeddings_dim, rank=None, **kwargs):
         """
