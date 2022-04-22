@@ -1,7 +1,7 @@
 from collections import defaultdict
 
 from torch.utils.data import Dataset
-from  torch import tensor
+from torch import tensor
 import numpy as np
 
 class Data:
@@ -35,7 +35,7 @@ class Data:
         return entities
 
 class KG_dataset(Dataset):
-    def __init__(self, data, entity_vocab, relations_vocab):
+    def __init__(self, data, entity_vocab, relations_vocab, test_set=False):
         self.data = data
         self.data_index = [(entity_vocab[self.data[i][0]], relations_vocab[self.data[i][1]],
                       entity_vocab[self.data[i][2]]) for i in range(len(self.data))]
@@ -44,6 +44,7 @@ class KG_dataset(Dataset):
             self.entity_relation_vocab[(triplet[0], triplet[1])].append(triplet[2])
         self.entity_relation_pairs = list(self.entity_relation_vocab.keys()) # features for model
         self.size = (len(self.entity_relation_pairs), len(entity_vocab), len(relations_vocab))
+        self.test_set = test_set
 
 
     def __len__(self):
@@ -62,11 +63,10 @@ class KG_dataset(Dataset):
 
     def __getitem__(self, idx):
         features = self.entity_relation_pairs[idx]
-        # targets = self._construct_targets(features)
         targets = np.zeros(self.size[1])
         targets[self.entity_relation_vocab[features]] = 1
-        # for i, pair in enumerate(features):
-        #     targets[i, self.entity_relation_vocab[pair]] = 1
-        #     ones in potions, where relation is present
+        if self.test_set:
+            features = self.data_index[idx]
+            return tensor(features), targets
         return tensor(features), targets
 

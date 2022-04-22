@@ -1,43 +1,11 @@
 import torch
 from torch import nn
 from torch.nn.init import xavier_normal_
-from torch.optim import Optimizer, Adam
 
 import numpy as np
 
 from tucker_riemopt import Tucker
-from tucker_riemopt.optimize import get_line_search_tool
-from tucker_riemopt.riemopt import compute_gradient_projection
 from tucker_riemopt import backend
-
-
-def MRR_metrics(predictions, targets):
-    _, idx = torch.sort(predictions, dim=1, descending=True)
-    targets_sorted = targets.gather(1, idx)
-    ranks = targets_sorted.argmax(1) + 1
-    mrr = torch.mean(1 / ranks)
-    return mrr
-
-
-def hits_k_metrics(predictions, targets, k = 1):
-    _, idx = torch.sort(predictions, dim=1, descending=True)
-    targets_sorted = targets.gather(1, idx)
-    hits = targets_sorted[:, :k].sum(1).float()
-    hits[hits > 1] = 1
-    return torch.mean(hits)
-
-
-def compute_metrics(predictions, targets, ks):
-    _, idx = torch.sort(predictions, dim=1, descending=True)
-    targets_sorted = targets.gather(1, idx)
-    ranks = targets_sorted.argmax(1) + 1
-    metrics = dict()
-    metrics["mrr"] = torch.mean(1 / ranks)
-    for k in ks:
-        hits = targets_sorted[:, :k].sum(1).float()
-        hits[hits > 1] = 1
-        metrics["hits_" + str(k)] = torch.mean(hits)
-    return metrics
 
 
 class R_TuckER(torch.nn.Module):
@@ -66,7 +34,7 @@ class R_TuckER(torch.nn.Module):
         self.loss = nn.BCELoss()
 
         self.bn0 = nn.BatchNorm1d(embeddings_dim[0])
-        self.bn1 = nn.BatchNorm1d(embeddings_dim[0])
+        # self.bns = [nn.BatchNorm1d(embeddings_dim[0]) for _ in range(kwargs.get("batch_norm", 64))]
 
     def init(self):
         xavier_normal_(self.S.weight.data)
@@ -121,55 +89,3 @@ class R_TuckER(torch.nn.Module):
         else:
             self.cpu()
         self.set_core(Tucker(self.core.core.to(device), [factor.to(device) for factor in self.core.factors]))
-
-
-class R_TuckEROptimizer(Optimizer):
-    def __init__(self, params, model, rank, lr, line_search_options=None):
-        self.line_search = get_line_search_tool(line_search_options)
-        self.rank = rank
-        self.model = model
-        defaults = dict(model=model, rank=rank, line_search=self.line_search)
-        super().__init__(params, defaults)
-        self.alpha = self.line_search.alpha_0
-        self.regular_optim = Adam(model.parameters(), lr=lr)
-
-    def calc_loss(self, predictions, targets):
-        loss = self.model.loss(predictions, targets)
-        # loss.backward()
-        return loss
-
-    def fit(self, loss_fn, targets):
-        x_k = self.model.core
-        func = lambda T: loss_fn(T, targets)
-        self.riemann_grad = compute_gradient_projection(func, x_k)
-        self.alpha = self.line_search.line_search(func, x_k, self.riemann_grad, -self.riemann_grad,
-                                                  self.rank, 1)
-
-    @torch.no_grad()
-    def step(self, closure=None):
-        """Performs a single optimization step.
-
-        Parameters:
-        -----------
-        closure: callable
-            A closure that reevaluates the model and returns the loss.
-        """
-        x_k = self.model.core
-        x_k -= self.alpha * self.riemann_grad
-        x_k = x_k.round(self.rank)
-        self.model.set_core(x_k)
-        self.regular_optim.step()
-        del self.riemann_grad
-
-
-def fit_core(model, loss_fn, targets, line_search_options=None):
-    x_k = model.core
-    rank = model.rank
-    line_search = get_line_search_tool(line_search_options)
-    func = lambda T: loss_fn(T, targets)
-    riemann_grad = compute_gradient_projection(func, x_k)
-    alpha = line_search.line_search(func, x_k, riemann_grad, -riemann_grad, rank,
-                                    2 * line_search.alpha_0)
-    x_k -= alpha * riemann_grad
-    x_k = x_k.round(rank)
-    return x_k

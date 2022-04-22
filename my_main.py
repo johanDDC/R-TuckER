@@ -1,15 +1,18 @@
 import torch
 from torch.utils.data import DataLoader
 from torch import tensor, FloatTensor
+from time import time
 
 from load import Data, KG_dataset
-from model import R_TuckER, R_TuckEROptimizer
+from model import R_TuckER
+from utils import R_TuckEROptimizer, filter_predictions
 
 from tucker_riemopt import set_backend
 
-BATCH_SIZE = (64, 256) # train_size, test_size
+BATCH_SIZE = (64, 64) # train_size, test_size
 EMBEDDINGS_DIM = (200, 200) # entity_dim, relation_dim
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+# DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cpu" if torch.cuda.is_available() else "cpu"
 EPOCHES = 500
 LR = 1e-3 # start learning rate
 MANIFOLD_RANK = 10
@@ -22,7 +25,7 @@ if __name__ == '__main__':
     train_dataset = KG_dataset(data.train_data, entity_vocab, relation_vocab)
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE[0], shuffle=True)
 
-    test_dataset = KG_dataset(data.test_data, entity_vocab, relation_vocab)
+    test_dataset = KG_dataset(data.test_data, entity_vocab, relation_vocab, test_set=True)
     test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE[1], shuffle=False)
 
     set_backend("pytorch")
@@ -37,7 +40,24 @@ if __name__ == '__main__':
             features = features.to(DEVICE)
             targets = targets.to(DEVICE).float()
             optimizer.zero_grad()
+            start = time()
             predictions, loss_fn = model(features[:, 0], features[:, 1])
+            print("model forward", time() - start)
+            start = time()
+            optimizer.fit(loss_fn, targets)
+            print("opt fit", time() - start)
+            start = time()
+            loss = optimizer.calc_loss(predictions, targets)
+            start = time()
+            optimizer.step()
+            print("opt step", time() - start)
+        model.eval()
+        for features, targets in test_dataloader:
+            features = features.to(DEVICE)
+            targets = targets.to(DEVICE).float()
+            optimizer.zero_grad()
+            predictions, loss_fn = model(features[:, 0], features[:, 1])
+            predictions = filter_predictions(predictions, targets, features[:, 2])
             optimizer.fit(loss_fn, targets)
             loss = optimizer.calc_loss(predictions, targets)
             optimizer.step()
