@@ -6,7 +6,8 @@ from tucker_riemopt.riemopt import compute_gradient_projection
 
 
 class R_TuckEROptimizer(Optimizer):
-    def __init__(self, params, model, rank, lr, line_search_options=None):
+    def __init__(self, params, model, rank, lr, line_search_options=None,
+                 scheduler_constructor=None):
         self.line_search = get_line_search_tool(line_search_options)
         self.rank = rank
         self.model = model
@@ -14,6 +15,8 @@ class R_TuckEROptimizer(Optimizer):
         super().__init__(params, defaults)
         self.alpha = self.line_search.alpha_0
         self.regular_optim = Adam(model.parameters(), lr=lr)
+        if scheduler_constructor:
+            self.scheduler = scheduler_constructor(self.regular_optim)
 
     def calc_loss(self, predictions, targets):
         loss = self.model.loss(predictions, targets)
@@ -42,6 +45,9 @@ class R_TuckEROptimizer(Optimizer):
         self.model.set_core(x_k)
         self.regular_optim.step()
         del self.riemann_grad
+
+    def scheduler_step(self):
+        self.scheduler.step()
 
 
 def MRR_metrics(predictions, targets):
