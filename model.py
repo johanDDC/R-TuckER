@@ -33,24 +33,27 @@ class R_TuckER(torch.nn.Module):
         self.hidden_dropout2 = nn.Dropout(kwargs.get("hidden_dropout2", 0))
         self.loss = nn.BCELoss()
 
-        self.bn0 = nn.BatchNorm1d(embeddings_dim[0])
+        self.bn_subject = nn.BatchNorm1d(embeddings_dim[0])
+        self.bn_relation = nn.BatchNorm1d(embeddings_dim[1])
         # self.bns = [nn.BatchNorm1d(embeddings_dim[0]) for _ in range(kwargs.get("batch_norm", 64))]
 
-    def init(self):
+    def init(self, rank):
         xavier_normal_(self.S.weight.data)
         xavier_normal_(self.R.weight.data)
+        self.core = self.core.round(rank)
 
     def set_core(self, T):
         self.core = T
 
     def forward(self, subject_idx, relation_idx):
         subjects = self.S(subject_idx)
+        subjects = self.bn_subject(subjects)
         relations = self.R(relation_idx)
+        relations = self.bn_relation(relations)
 
         def forward_core(T, targets):
-            x = self.bn0(subjects)
             W = T.k_mode_product(1, relations)
-            W = W.k_mode_product(0, x)
+            W = W.k_mode_product(0, subjects)
             x = W.k_mode_product(2, self.S.weight)
             pred = torch.sigmoid(x.full())
             preds = pred[0, 0, :].reshape(1, -1)
@@ -58,30 +61,17 @@ class R_TuckER(torch.nn.Module):
                 preds = torch.cat([preds, pred[i, i, :].reshape(1, -1)], dim=0)
             return self.loss(preds, targets)
 
-        x = self.bn0(subjects)
+        relations = self.bn_relation(relations)
         # x = self.input_dropout(x)
         # x.shape: batch_size x entities_dim
         W = self.core.k_mode_product(1, relations)
-        W = W.k_mode_product(0, x)
+        W = W.k_mode_product(0, subjects)
         x = W.k_mode_product(2, self.S.weight)
         pred = torch.sigmoid(x.full())
         preds = pred[0, 0, :].reshape(1, -1)
         for i in range(1, pred.shape[0]):
             preds = torch.cat([preds, pred[i, i, :].reshape(1, -1)], dim=0)
         return preds, forward_core
-
-        # relations = self.R(relation_idx)
-        # W_mat = torch.mm(r, self.W.view(r.size(1), -1))
-        # W_mat = W_mat.view(-1, e1.size(1), e1.size(1))
-        # W_mat = self.hidden_dropout1(W_mat)
-        #
-        # x = torch.bmm(x, W_mat)
-        # x = x.view(-1, e1.size(1))
-        # x = self.bn1(x)
-        # x = self.hidden_dropout2(x)
-        # x = torch.mm(x, self.E.weight.transpose(1,0))
-        # pred = torch.sigmoid(x)
-        # return pred
 
     def to(self, device):
         if device == "cuda":
