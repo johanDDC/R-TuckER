@@ -35,7 +35,7 @@ class Data:
         return entities
 
 class KG_dataset(Dataset):
-    def __init__(self, data, entity_vocab, relations_vocab, test_set=False):
+    def __init__(self, data, entity_vocab, relations_vocab, label_smoothing=None, test_set=False):
         self.data = data
         self.data_index = [(entity_vocab[self.data[i][0]], relations_vocab[self.data[i][1]],
                       entity_vocab[self.data[i][2]]) for i in range(len(self.data))]
@@ -45,6 +45,7 @@ class KG_dataset(Dataset):
         self.entity_relation_pairs = list(self.entity_relation_vocab.keys()) # features for model
         self.size = (len(self.entity_relation_pairs), len(entity_vocab), len(relations_vocab))
         self.test_set = test_set
+        self.label_smoothing = label_smoothing
 
 
     def __len__(self):
@@ -68,5 +69,7 @@ class KG_dataset(Dataset):
         if self.test_set:
             features = self.data_index[idx]
             return tensor(features), targets
+        if self.label_smoothing:
+            targets = (1 - self.label_smoothing) * targets + 1 / targets.shape[0]
         return tensor(features), targets
 
