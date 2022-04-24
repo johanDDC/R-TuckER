@@ -87,4 +87,4 @@ def filter_predictions(predictions, targets, filter):
     predictions[targets == 1] = 0
     targets[targets == 1] = 0
     return predictions.scatter_(1, filter, interest_prediction_vals), \
-            targets.scatter_(1, filter, torch.ones(interest_prediction_vals.shape))
+            targets.scatter_(1, filter, torch.ones(interest_prediction_vals.shape, device=targets.device))
