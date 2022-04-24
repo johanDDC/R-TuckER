@@ -7,7 +7,6 @@ import numpy as np
 from tucker_riemopt import Tucker
 from tucker_riemopt import backend
 
-
 class R_TuckER(torch.nn.Module):
     def __init__(self, data_count, embeddings_dim, rank=None, **kwargs):
         """
@@ -33,9 +32,8 @@ class R_TuckER(torch.nn.Module):
         self.hidden_dropout2 = nn.Dropout(kwargs.get("hidden_dropout2", 0))
         self.loss = nn.BCELoss()
 
-        self.bn_subject = nn.BatchNorm1d(embeddings_dim[0])
-        self.bn_relation = nn.BatchNorm1d(embeddings_dim[1])
-        # self.bns = [nn.BatchNorm1d(embeddings_dim[0]) for _ in range(kwargs.get("batch_norm", 64))]
+        self.bn0 = nn.BatchNorm1d(embeddings_dim[0])
+        self.bn1 = nn.BatchNorm1d(embeddings_dim[1])
 
     def init(self, rank):
         xavier_normal_(self.S.weight.data)
@@ -47,13 +45,13 @@ class R_TuckER(torch.nn.Module):
 
     def forward(self, subject_idx, relation_idx):
         subjects = self.S(subject_idx)
-        subjects = self.bn_subject(subjects)
         relations = self.R(relation_idx)
-        relations = self.bn_relation(relations)
+        relations = self.bn1(relations)
 
         def forward_core(T, targets):
+            x = self.bn0(subjects)
             W = T.k_mode_product(1, relations)
-            W = W.k_mode_product(0, subjects)
+            W = W.k_mode_product(0, x)
             x = W.k_mode_product(2, self.S.weight)
             pred = torch.sigmoid(x.full())
             preds = pred[0, 0, :].reshape(1, -1)
@@ -61,11 +59,11 @@ class R_TuckER(torch.nn.Module):
                 preds = torch.cat([preds, pred[i, i, :].reshape(1, -1)], dim=0)
             return self.loss(preds, targets)
 
-        relations = self.bn_relation(relations)
+        x = self.bn0(subjects)
         # x = self.input_dropout(x)
         # x.shape: batch_size x entities_dim
         W = self.core.k_mode_product(1, relations)
-        W = W.k_mode_product(0, subjects)
+        W = W.k_mode_product(0, x)
         x = W.k_mode_product(2, self.S.weight)
         pred = torch.sigmoid(x.full())
         preds = pred[0, 0, :].reshape(1, -1)
