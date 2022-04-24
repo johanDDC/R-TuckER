@@ -49,7 +49,10 @@ class KG_dataset(Dataset):
 
 
     def __len__(self):
-        return self.size[0]
+        if self.test_set:
+            return len(self.data_index)
+        else:
+            return self.size[0]
 
 
     def _construct_targets(self, features):
@@ -63,13 +66,14 @@ class KG_dataset(Dataset):
 
 
     def __getitem__(self, idx):
-        features = self.entity_relation_pairs[idx]
         targets = np.zeros(self.size[1])
-        targets[self.entity_relation_vocab[features]] = 1
         if self.test_set:
             features = self.data_index[idx]
-            return tensor(features), targets
+            feature_pair = (features[0], features[1])
+            targets[self.entity_relation_vocab[feature_pair]] = 1
+        else:
+            features = self.entity_relation_pairs[idx]
+            targets[self.entity_relation_vocab[features]] = 1
         if self.label_smoothing:
-            targets = (1 - self.label_smoothing) * targets + 1 / targets.shape[0]
+            targets = (1 - self.label_smoothing) * targets + 1 / self.size[1]
         return tensor(features), targets
-
