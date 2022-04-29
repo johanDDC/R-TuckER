@@ -1,11 +1,11 @@
 import torch
 from torch.utils.data import DataLoader
 from torch import tensor, FloatTensor
-from time import time
+import numpy as np
 
 from load import Data, KG_dataset
 from model import R_TuckER
-from utils import R_TuckEROptimizer, filter_predictions, compute_metrics
+from utils import R_TuckEROptimizer, filter_predictions, compute_metrics, RSVRG
 
 from tucker_riemopt import set_backend
 
@@ -14,8 +14,8 @@ EMBEDDINGS_DIM = (200, 200) # entity_dim, relation_dim
 # DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEVICE = "cpu" if torch.cuda.is_available() else "cpu"
 EPOCHES = 500
-LR = 1e-3 # start learning rate
-MANIFOLD_RANK = 10
+LR = 1e-2 # start learning rate
+MANIFOLD_RANK = 50
 
 if __name__ == '__main__':
     data = Data()
@@ -29,23 +29,34 @@ if __name__ == '__main__':
     test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE[1], shuffle=False)
 
     set_backend("pytorch")
-    # model = R_TuckER((len(entity_vocab), len(relation_vocab)), EMBEDDINGS_DIM)
-    # model.to(DEVICE)
-    # model.init(MANIFOLD_RANK)
-    # torch.save(model, "model.pt")
-    model = torch.load("rk_10_epoch_2.pt")
+    model = R_TuckER((len(entity_vocab), len(relation_vocab)), MANIFOLD_RANK)
+    model.init(MANIFOLD_RANK)
     model.to(DEVICE)
-    optimizer = R_TuckEROptimizer(model.parameters(), model, MANIFOLD_RANK, LR)
+    # torch.save(model, "model.pt")
+    # model = torch.load("rk_50_epoch_5.pt")
+    # model.to(DEVICE)
+    # optimizer = R_TuckEROptimizer(model.parameters(), model, MANIFOLD_RANK, LR)
+    optimizer = RSVRG(model.parameters(), model, MANIFOLD_RANK, LR, train_dataloader)
+    optimizer.idx[0] = 2
+    optimizer.idx[1] = 3
+    a = 4
+    j = 0
     for epoch in range(1, EPOCHES + 1):
         model.train()
+        losses = []
         for features, targets in train_dataloader:
             features = features.to(DEVICE)
             targets = targets.to(DEVICE).float()
             optimizer.zero_grad()
             predictions, loss_fn = model(features[:, 0], features[:, 1])
             optimizer.fit(loss_fn, targets)
-            loss = optimizer.calc_loss(predictions, targets)
-            optimizer.step()
+            loss = optimizer.loss(predictions, targets)
+            losses.append(loss.item())
+            print("\r", np.round(np.mean(losses), 4), sep="", end="")
+            if j == a:
+                optimizer.step()
+            j += 1
+        optimizer.step()
 
         model.eval()
         total_preds = torch.Tensor().to(DEVICE)
@@ -60,4 +71,5 @@ if __name__ == '__main__':
                 total_targets = torch.cat([total_targets, targets])
             local_metrics = compute_metrics(total_preds.detach().cpu(), total_targets.detach().cpu(),
                                             [1, 3, 10], None)
+        torch.save(model, "model.pt")
 

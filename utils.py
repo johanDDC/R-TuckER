@@ -2,32 +2,36 @@ import torch
 from torch.optim import Optimizer, Adam
 
 from tucker_riemopt.optimize import get_line_search_tool
-from tucker_riemopt.riemopt import compute_gradient_projection
+from tucker_riemopt.riemopt import compute_gradient_projection, vector_transport
+from torch.autograd import Variable
 
 
 class R_TuckEROptimizer(Optimizer):
-    def __init__(self, params, model, rank, lr, line_search_options=None,
-                 scheduler_constructor=None):
+    def __init__(self, params, model, rank, lr, line_search_options=None):
         self.line_search = get_line_search_tool(line_search_options)
         self.rank = rank
         self.model = model
-        defaults = dict(model=model, rank=rank, line_search=self.line_search)
+        defaults = dict(model=model, rank=rank, lr=lr, line_search=self.line_search)
         super().__init__(params, defaults)
-        self.alpha = self.line_search.alpha_0
-        self.regular_optim = Adam(model.parameters(), lr=lr)
-        if scheduler_constructor:
-            self.scheduler = scheduler_constructor(self.regular_optim)
+        self.alpha = lr
+        self.lr = None
+        if lr == "Optimal":
+            self.lr = True
+            self.line_search = get_line_search_tool(line_search_options)
+            self.alpha = self.line_search.alpha_0
+
 
     def calc_loss(self, predictions, targets):
         loss = self.model.loss(predictions, targets)
         return loss
 
     def fit(self, loss_fn, targets):
-        x_k = self.model.core
+        x_k = self.model.tucker
         func = lambda T: loss_fn(T, targets)
         self.riemann_grad = compute_gradient_projection(func, x_k)
-        self.alpha = self.line_search.line_search(func, x_k, self.riemann_grad, -self.riemann_grad,
-                                                  self.rank, 1)
+        if self.lr:
+            self.alpha = self.line_search.line_search(func, x_k, self.riemann_grad, -self.riemann_grad,
+                                                      self.rank, 1)
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -38,15 +42,94 @@ class R_TuckEROptimizer(Optimizer):
         closure: callable
             A closure that reevaluates the model and returns the loss.
         """
-        x_k = self.model.core
+        x_k = self.model.tucker
         x_k -= self.alpha * self.riemann_grad
         x_k = x_k.round(self.rank)
-        self.model.set_core(x_k)
-        self.regular_optim.step()
+        x_k.factors[2] = x_k.factors[0]
+        self.model.tucker = x_k
         del self.riemann_grad
 
-    def scheduler_step(self):
-        self.scheduler.step()
+
+class RSVRG(Optimizer):
+    def __init__(self, params, model, rank, lr, dataloader, memory=10, line_search_options=None):
+        self.line_search = get_line_search_tool(line_search_options)
+        self.rank = rank
+        self.model = model
+        self.lr = lr
+        self.memory = memory
+        self.dataloader = dataloader
+        defaults = dict(model=model, rank=rank, lr=lr, dataloader=dataloader, memory=memory, line_search=self.line_search)
+        super().__init__(params, defaults)
+        self.rieman_grad = None
+        self.idx = torch.randint(0, len(dataloader), (self.memory,))
+        self.idx, _ = torch.sort(self.idx)
+        self.fit_count = 0
+        self.saved_grads = []
+        self.batches = []
+
+    def loss(self, predictions, targets):
+        loss = self.model.loss(predictions, targets)
+        return Variable(loss, requires_grad=True)
+
+    def fit(self, loss_fn, targets):
+        func = lambda T: loss_fn(T, targets)
+        x_k = self.model.tucker
+        if self.rieman_grad is None:
+            self.fit_count = 0
+            self.saved_grads = []
+            self.rieman_grad = compute_gradient_projection(func, x_k)
+            self.rieman_grad_rank = self.rieman_grad.rank
+            if 0 in self.idx:
+                self.saved_grads.append(self.rieman_grad)
+        else:
+            self.fit_count += 1
+            grad = compute_gradient_projection(func, x_k)
+            self.rieman_grad += grad
+            self.rieman_grad = self.rieman_grad.round(self.rieman_grad_rank)
+            if self.fit_count in self.idx:
+                self.saved_grads.append(grad)
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        """Performs a single optimization step.
+
+        Parameters:
+        -----------
+        closure: callable
+            A closure that reevaluates the model and returns the loss.
+        """
+        x_k = self.model.tucker
+        self.rieman_grad = (1 / self.fit_count) * self.rieman_grad
+        x_opt = self.model.tucker
+        for t in range(self.memory):
+            if t == 0:
+                v = self.saved_grads[t] - vector_transport(x_opt, x_k, self.saved_grads[t] - self.rieman_grad)
+            else:
+                v = self._restore_grad(t, x_k) - vector_transport(x_opt, x_k, self.saved_grads[t] - self.rieman_grad)
+            x_k -= self.lr * v
+            x_k = x_k.round(self.rank)
+            del self.saved_grads[t]
+        x_k.factors[2] = x_k.factors[0]
+        self.model.tucker = x_k
+        del self.rieman_grad
+        self.rieman_grad = None
+
+    def _restore_grad(self, idx, T):
+        if len(self.batches) == 0:
+            for i, batch in enumerate(self.dataloader):
+                if i in self.idx:
+                    self.batches.append(batch)
+                if len(self.batches) == len(self.idx):
+                    break
+        features, targets = self.batches[idx]
+        features = features.to(self.model.device)
+        targets = targets.to(self.model.device).float()
+        predictions, loss_fn = self.model(features[:, 0], features[:, 1])
+        loss = self.loss(predictions, targets)
+        func = lambda T: loss_fn(T, targets)
+        return compute_gradient_projection(func, T)
+
+
 
 
 def MRR_metrics(predictions, targets):

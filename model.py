@@ -1,6 +1,7 @@
 import torch
-from torch import nn
-from torch.nn.init import xavier_normal_
+from torch import nn, sparse_coo_tensor
+from torch.nn.init import xavier_normal_, uniform_
+from torch.autograd import Variable
 
 import numpy as np
 
@@ -8,7 +9,7 @@ from tucker_riemopt import Tucker
 from tucker_riemopt import backend
 
 class R_TuckER(torch.nn.Module):
-    def __init__(self, data_count, embeddings_dim, rank=None, **kwargs):
+    def __init__(self, shape, rank):
         """
         Parameters:
         -----------
@@ -20,60 +21,71 @@ class R_TuckER(torch.nn.Module):
             rank of the manifold
         """
         super(R_TuckER, self).__init__()
+        if type(rank) is int:
+            rank = [rank] * 3
 
-        self.S = nn.Embedding(data_count[0], embeddings_dim[0])
-        self.R = nn.Embedding(data_count[1], embeddings_dim[1])
-        self.rank = rank
-        self.core = backend.tensor(np.random.uniform(-1, 1, (embeddings_dim[0], embeddings_dim[1], embeddings_dim[0])),
-                                 dtype=torch.float)
-        self.core = Tucker.full2tuck(self.core)
-        self.input_dropout = nn.Dropout(kwargs.get("input_dropout", 0))
-        self.hidden_dropout1 = nn.Dropout(kwargs.get("hidden_dropout1", 0))
-        self.hidden_dropout2 = nn.Dropout(kwargs.get("hidden_dropout2", 0))
-        self.loss = nn.BCELoss()
+        self.S = backend.randn((shape[0], rank[0]), dtype=torch.float32)
+        self.S = Variable(self.S, requires_grad = True)
+        self.R = backend.randn((shape[1], rank[1]), dtype=torch.float32)
+        self.R = Variable(self.R, requires_grad = True)
+        self.core = backend.randn(rank, dtype=torch.float32)
+        self.core = Variable(self.core, requires_grad=True)
+        self.tucker = Tucker(self.core, [self.S, self.R, self.S])
+        self.device = "cpu"
 
-        self.bn0 = nn.BatchNorm1d(embeddings_dim[0])
-        self.bn1 = nn.BatchNorm1d(embeddings_dim[1])
+        self.bn_0 = nn.BatchNorm1d(rank[0])
+        self.bn_1 = nn.BatchNorm1d(rank[1])
+        self.loss = nn.BCELoss(reduction="sum")
+
 
     def init(self, rank):
-        xavier_normal_(self.S.weight.data)
-        xavier_normal_(self.R.weight.data)
-        self.core = self.core.round(rank)
+        uniform_(self.core, -1, 1)
+        # normal_(self.S)
+        # normal_(self.R)
+        xavier_normal_(self.S)
+        xavier_normal_(self.R)
+        # xavier_normal_(self.core)
 
     def set_core(self, T):
         self.core = T
 
     def forward(self, subject_idx, relation_idx):
-        subjects = self.S(subject_idx)
-        relations = self.R(relation_idx)
-        relations = self.bn1(relations)
+        batch_size = len(subject_idx)
+        batch_arange = torch.arange(batch_size).to(self.device)
+        subject_idx = torch.vstack([batch_arange, subject_idx])
+        subject_idx = sparse_coo_tensor(subject_idx, torch.ones(subject_idx.shape[1]),
+                                        (batch_size, self.S.shape[0]), dtype=torch.float32, device=self.device)
+        relation_idx = torch.vstack([batch_arange, relation_idx])
+        relation_idx = sparse_coo_tensor(relation_idx, torch.ones(relation_idx.shape[1]),
+                                        (batch_size, self.R.shape[0]), dtype=torch.float32, device=self.device)
+        pred = self.tucker.k_mode_product(0, subject_idx).k_mode_product(1, relation_idx)
+        # pred.factors[0] = self.bn_0(pred.factors[0])
+        # pred.factors[1] = self.bn_1(pred.factors[1])
+        pred = pred.full()
+        pred = torch.sigmoid(pred)
+        preds = pred[0, 0, :].reshape(1, -1)
+        for i in range(1, pred.shape[0]):
+            preds = torch.cat([preds, pred[i, i, :].reshape(1, -1)], dim=0)
 
-        def forward_core(T, targets):
-            x = self.bn0(subjects)
-            W = T.k_mode_product(1, relations)
-            W = W.k_mode_product(0, x)
-            x = W.k_mode_product(2, self.S.weight)
-            pred = torch.sigmoid(x.full())
+        def loss_fn(T, targets):
+            pred = T.k_mode_product(0, subject_idx).k_mode_product(1, relation_idx)
+            # pred.factors[0] = self.bn_0(pred.factors[0])
+            # pred.factors[1] = self.bn_1(pred.factors[1])
+            pred = pred.full()
+            pred = torch.sigmoid(pred)
             preds = pred[0, 0, :].reshape(1, -1)
             for i in range(1, pred.shape[0]):
                 preds = torch.cat([preds, pred[i, i, :].reshape(1, -1)], dim=0)
             return self.loss(preds, targets)
 
-        x = self.bn0(subjects)
-        # x = self.input_dropout(x)
-        # x.shape: batch_size x entities_dim
-        W = self.core.k_mode_product(1, relations)
-        W = W.k_mode_product(0, x)
-        x = W.k_mode_product(2, self.S.weight)
-        pred = torch.sigmoid(x.full())
-        preds = pred[0, 0, :].reshape(1, -1)
-        for i in range(1, pred.shape[0]):
-            preds = torch.cat([preds, pred[i, i, :].reshape(1, -1)], dim=0)
-        return preds, forward_core
+        return preds, loss_fn
 
     def to(self, device):
         if device == "cuda":
             self.cuda()
+            self.device = "cuda"
         else:
             self.cpu()
-        self.set_core(Tucker(self.core.core.to(device), [factor.to(device) for factor in self.core.factors]))
+            self.device = "cpu"
+        self.tucker = Tucker(self.core.to(device),
+                             [self.S.to(device), self.R.to(device), self.S.to(device)])
