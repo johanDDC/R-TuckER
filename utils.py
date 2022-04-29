@@ -6,28 +6,29 @@ from tucker_riemopt.riemopt import compute_gradient_projection
 
 
 class R_TuckEROptimizer(Optimizer):
-    def __init__(self, params, model, rank, lr, line_search_options=None,
+    def __init__(self, params, model, rank, lr=None, line_search_options=None,
                  scheduler_constructor=None):
         self.line_search = get_line_search_tool(line_search_options)
         self.rank = rank
         self.model = model
-        defaults = dict(model=model, rank=rank, line_search=self.line_search)
+        self.lr = self.line_search.alpha_0 if lr is None else lr
+        self.line_search = None if lr is None else self.line_search
+        defaults = dict(model=model, rank=rank, lr=self.lr, line_search=self.line_search)
         super().__init__(params, defaults)
-        self.alpha = self.line_search.alpha_0
-        self.regular_optim = Adam(model.parameters(), lr=lr)
+        self.regular_optim = Adam(model.parameters(), lr=self.lr)
         if scheduler_constructor:
             self.scheduler = scheduler_constructor(self.regular_optim)
 
-    def calc_loss(self, predictions, targets):
-        loss = self.model.loss(predictions, targets)
-        return loss
+    def loss(self, predictions, targets):
+        return self.model.loss(predictions, targets)
 
     def fit(self, loss_fn, targets):
         x_k = self.model.core
         func = lambda T: loss_fn(T, targets)
         self.riemann_grad = compute_gradient_projection(func, x_k)
-        self.alpha = self.line_search.line_search(func, x_k, self.riemann_grad, -self.riemann_grad,
-                                                  self.rank, 1)
+        if self.line_search:
+            self.lr = self.line_search.line_search(func, x_k, self.riemann_grad, -self.riemann_grad,
+                                                      self.rank, 1)
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -39,7 +40,7 @@ class R_TuckEROptimizer(Optimizer):
             A closure that reevaluates the model and returns the loss.
         """
         x_k = self.model.core
-        x_k -= self.alpha * self.riemann_grad
+        x_k -= self.lr * self.riemann_grad
         x_k = x_k.round(self.rank)
         self.model.set_core(x_k)
         self.regular_optim.step()
