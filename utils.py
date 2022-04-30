@@ -2,7 +2,7 @@ import torch
 from torch.optim import Optimizer, Adam
 
 from tucker_riemopt.optimize import get_line_search_tool
-from tucker_riemopt.riemopt import compute_gradient_projection
+from tucker_riemopt.riemopt import compute_gradient_projection, vector_transport
 
 
 class R_TuckEROptimizer(Optimizer):
@@ -12,7 +12,7 @@ class R_TuckEROptimizer(Optimizer):
         self.rank = rank
         self.model = model
         self.lr = self.line_search.alpha_0 if lr is None else lr
-        self.line_search = None if lr is None else self.line_search
+        self.line_search = None if lr else self.line_search
         defaults = dict(model=model, rank=rank, lr=self.lr, line_search=self.line_search)
         super().__init__(params, defaults)
         self.regular_optim = Adam(model.parameters(), lr=self.lr)
