@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from torch.nn.init import xavier_normal_
+from torch.nn.init import xavier_normal_, xavier_uniform_
 
 import numpy as np
 
@@ -24,9 +24,7 @@ class R_TuckER(torch.nn.Module):
         self.S = nn.Embedding(data_count[0], embeddings_dim[0])
         self.R = nn.Embedding(data_count[1], embeddings_dim[1])
         self.rank = rank
-        self.core = backend.tensor(np.random.uniform(-1, 1, (embeddings_dim[0], embeddings_dim[1], embeddings_dim[0])),
-                                 dtype=torch.float)
-        self.core = Tucker.full2tuck(self.core)
+        self.core = backend.randn((embeddings_dim[0], embeddings_dim[1], embeddings_dim[0]), dtype=torch.float32)
         self.input_dropout = nn.Dropout(kwargs.get("input_dropout", 0))
         self.hidden_dropout1 = nn.Dropout(kwargs.get("hidden_dropout1", 0))
         self.hidden_dropout2 = nn.Dropout(kwargs.get("hidden_dropout2", 0))
@@ -38,7 +36,8 @@ class R_TuckER(torch.nn.Module):
     def init(self, rank):
         xavier_normal_(self.S.weight.data)
         xavier_normal_(self.R.weight.data)
-        self.core = self.core.round(rank)
+        self.core = xavier_uniform_(self.core)
+        self.core = Tucker.full2tuck(self.core, rank)
 
     def set_core(self, T):
         self.core = T

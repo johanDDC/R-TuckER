@@ -5,7 +5,7 @@ from time import time
 
 from load import Data, KG_dataset
 from model import R_TuckER
-from utils import R_TuckEROptimizer, filter_predictions, compute_metrics
+from utils import R_TuckEROptimizer, filter_predictions, compute_metrics, RCGOptimizer
 
 from tucker_riemopt import set_backend
 
@@ -29,13 +29,14 @@ if __name__ == '__main__':
     test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE[1], shuffle=False)
 
     set_backend("pytorch")
-    # model = R_TuckER((len(entity_vocab), len(relation_vocab)), EMBEDDINGS_DIM)
+    model = R_TuckER((len(entity_vocab), len(relation_vocab)), EMBEDDINGS_DIM)
     # model.to(DEVICE)
-    # model.init(MANIFOLD_RANK)
+    model.init(MANIFOLD_RANK)
     # torch.save(model, "model.pt")
-    model = torch.load("rk_10_epoch_2.pt")
+    # model = torch.load("rk_10_epoch_2.pt")
     model.to(DEVICE)
     optimizer = R_TuckEROptimizer(model.parameters(), model, MANIFOLD_RANK, LR)
+    # optimizer = RCGOptimizer(model.parameters(), model, MANIFOLD_RANK, LR)
     for epoch in range(1, EPOCHES + 1):
         model.train()
         for features, targets in train_dataloader:
@@ -44,7 +45,7 @@ if __name__ == '__main__':
             optimizer.zero_grad()
             predictions, loss_fn = model(features[:, 0], features[:, 1])
             optimizer.fit(loss_fn, targets)
-            loss = optimizer.calc_loss(predictions, targets)
+            loss = optimizer.loss(predictions, targets)
             optimizer.step()
 
         model.eval()
