@@ -1,5 +1,6 @@
 import torch
 from torch.optim import Optimizer, Adam
+from tucker_riemopt import Tucker
 
 from tucker_riemopt.optimize import get_line_search_tool
 from tucker_riemopt.riemopt import compute_gradient_projection, vector_transport
@@ -102,10 +103,10 @@ class RSVRG(Optimizer):
         self.rieman_grad = (1 / self.fit_count) * self.rieman_grad
         x_opt = self.model.tucker
         for t in range(self.memory):
-            if t == 0:
-                v = self.saved_grads[t] - vector_transport(x_opt, x_k, self.saved_grads[t] - self.rieman_grad)
-            else:
-                v = self._restore_grad(t, x_k) - vector_transport(x_opt, x_k, self.saved_grads[t] - self.rieman_grad)
+            # if t == 0:
+            #     v = self.saved_grads[t] - vector_transport(x_opt, x_k, self.saved_grads[t] - self.rieman_grad)
+            # else:
+            v = self._restore_grad(t, x_k) - vector_transport(x_opt, x_k, self.saved_grads[t] - self.rieman_grad)
             x_k -= self.lr * v
             x_k = x_k.round(self.rank)
             del self.saved_grads[t]
@@ -113,6 +114,44 @@ class RSVRG(Optimizer):
         self.model.tucker = x_k
         del self.rieman_grad
         self.rieman_grad = None
+
+    def _grad(self, func, T):
+        def pad(tensor, pad_width, constant_values):
+            from torch.nn.functional import pad
+            flat_pad_width = []
+            for pair in pad_width:
+                flat_pad_width.append(pair[1])
+                flat_pad_width.append(pair[0])
+            flat_pad_width = flat_pad_width[::-1]
+            return pad(tensor, flat_pad_width, "constant", 0)
+
+        def group_cores(core1, core2):
+            d = len(core1.shape)
+            r = core1.shape
+
+            new_core = core1
+            to_concat = core2
+
+            for i in range(d):
+                to_concat = pad(to_concat, [(0, r[j]) if j == i - 1 else (0, 0) for j in range(d)],
+                                     constant_values=0)
+                new_core = torch.cat([new_core, to_concat], axis=i)
+
+            return new_core
+
+        def g(T1, core, factors):
+            new_factors = [torch.cat([T1.factors[i], factors[i]], axis=1) for i in range(T1.ndim)]
+            new_core = group_cores(core, T1.core)
+
+            T = Tucker(new_core, new_factors)
+            return func(T)
+
+        fs = [torch.zeros_like(T.factors[i]) for i in range(T.ndim)]
+        torch.autograd.backward(g(T, T.core, fs))
+        dS = T.core.grad
+        dU = [fs[i].grad for i in range(3)]
+        dU = [dU[i] - T.factors[i] @ (T.factors[i].T @ dU[i]) for i in range(len(dU))]
+        return Tucker(group_cores(dS, T.core), [torch.cat([T.factors[i], dU[i]], axis=1) for i in range(T.ndim)])
 
     def _restore_grad(self, idx, T):
         if len(self.batches) == 0:
@@ -127,7 +166,7 @@ class RSVRG(Optimizer):
         predictions, loss_fn = self.model(features[:, 0], features[:, 1])
         loss = self.loss(predictions, targets)
         func = lambda T: loss_fn(T, targets)
-        return compute_gradient_projection(func, T)
+        return self._grad(func, T)
 
 
 
