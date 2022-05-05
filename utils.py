@@ -1,10 +1,13 @@
+import numpy as np
 import torch
 from torch.optim import Optimizer, Adam
 from tucker_riemopt import Tucker
+from copy import deepcopy
 
 from tucker_riemopt.optimize import get_line_search_tool
 from tucker_riemopt.riemopt import compute_gradient_projection, vector_transport
-from torch.autograd import Variable
+
+from collections import deque
 
 
 class R_TuckEROptimizer(Optimizer):
@@ -52,43 +55,51 @@ class R_TuckEROptimizer(Optimizer):
 
 
 class RSVRG(Optimizer):
-    def __init__(self, params, model, rank, lr, dataloader, memory=10, line_search_options=None):
+    def __init__(self, params, model, rank, lr, len_batches, memory=10, line_search_options=None):
         self.line_search = get_line_search_tool(line_search_options)
-        self.rank = rank
+        self.rank = rank if type(rank) is not int else [rank, rank, rank]
         self.model = model
         self.lr = lr
         self.memory = memory
-        self.dataloader = dataloader
-        defaults = dict(model=model, rank=rank, lr=lr, dataloader=dataloader, memory=memory, line_search=self.line_search)
+        defaults = dict(model=model, rank=rank, lr=lr, memory=memory, line_search=self.line_search)
         super().__init__(params, defaults)
         self.rieman_grad = None
-        self.idx = torch.randint(0, len(dataloader), (self.memory,))
+        self.rieman_grad_next = None
+        self.idx = np.random.choice(np.arange(0, len_batches), self.memory, False)
+        self.idx = torch.tensor(self.idx)
         self.idx, _ = torch.sort(self.idx)
         self.fit_count = 0
-        self.saved_grads = []
-        self.batches = []
+        self.saved_grads = [[], []]
+        self.x_k = model.tucker
 
     def loss(self, predictions, targets):
-        loss = self.model.loss(predictions, targets)
-        return Variable(loss, requires_grad=True)
+        return self.model.loss(predictions, targets)
 
     def fit(self, loss_fn, targets):
         func = lambda T: loss_fn(T, targets)
-        x_k = self.model.tucker
-        if self.rieman_grad is None:
-            self.fit_count = 0
-            self.saved_grads = []
-            self.rieman_grad = compute_gradient_projection(func, x_k)
-            self.rieman_grad_rank = self.rieman_grad.rank
-            if 0 in self.idx:
-                self.saved_grads.append(self.rieman_grad)
-        else:
-            self.fit_count += 1
-            grad = compute_gradient_projection(func, x_k)
-            self.rieman_grad += grad
-            self.rieman_grad = self.rieman_grad.round(self.rieman_grad_rank)
-            if self.fit_count in self.idx:
-                self.saved_grads.append(grad)
+        x_k = deepcopy(self.model.tucker)
+
+        grad = compute_gradient_projection(func, x_k)
+        self.rieman_grad = grad if self.rieman_grad is None else\
+            self.rieman_grad + grad
+        self.fit_count += 1
+        if self.fit_count > 1:
+            self.rieman_grad = self.rieman_grad.round(self.rank * 2)
+        if (self.fit_count - 1) in self.idx:
+            self.saved_grads[1].append(grad)
+
+        if self.rieman_grad_next is not None:
+            if (self.fit_count - 1) in self.idx:
+                x_k_copy = deepcopy(self.x_k)
+                v = compute_gradient_projection(func, x_k_copy) -\
+                    vector_transport(None, x_k_copy, self.saved_grads[0][(self.idx == (self.fit_count - 1)).nonzero().item()] - self.rieman_grad_next)
+                self.x_k -= self.lr * v
+                self.x_k = self.x_k.round(self.rank)
+
+                # self.model.tucker.core = torch.clone(self.x_k.core)
+                # self.model.tucker.factors[0] = torch.clone(self.x_k.factors[0])
+                # self.model.tucker.factors[2] = torch.clone(self.x_k.factors[0])
+                # self.model.tucker.factors[1] = torch.clone(self.x_k.factors[1])
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -99,74 +110,23 @@ class RSVRG(Optimizer):
         closure: callable
             A closure that reevaluates the model and returns the loss.
         """
-        x_k = self.model.tucker
+        if self.rieman_grad_next is not None:
+            self.x_k.factors[2] = self.x_k.factors[0]
+            self.model.tucker = self.x_k
+            # self.model.tucker.core = torch.clone(self.x_k.core)
+            # self.model.tucker.factors[0] = torch.clone(self.x_k.factors[0])
+            # self.model.tucker.factors[2] = torch.clone(self.x_k.factors[0])
+            # self.model.tucker.factors[1] = torch.clone(self.x_k.factors[1])
+
+            self.idx = np.random.choice(np.arange(0, len(self.idx)), self.memory, False)
+            self.idx = torch.tensor(self.idx)
+            self.idx, _ = torch.sort(self.idx)
+
+        self.saved_grads[0], self.saved_grads[1] = self.saved_grads[1], []
         self.rieman_grad = (1 / self.fit_count) * self.rieman_grad
-        x_opt = self.model.tucker
-        for t in range(self.memory):
-            # if t == 0:
-            #     v = self.saved_grads[t] - vector_transport(x_opt, x_k, self.saved_grads[t] - self.rieman_grad)
-            # else:
-            v = self._restore_grad(t, x_k) - vector_transport(x_opt, x_k, self.saved_grads[t] - self.rieman_grad)
-            x_k -= self.lr * v
-            x_k = x_k.round(self.rank)
-            del self.saved_grads[t]
-        x_k.factors[2] = x_k.factors[0]
-        self.model.tucker = x_k
-        del self.rieman_grad
+        self.rieman_grad_next = self.rieman_grad
         self.rieman_grad = None
-
-    def _grad(self, func, T):
-        def pad(tensor, pad_width, constant_values):
-            from torch.nn.functional import pad
-            flat_pad_width = []
-            for pair in pad_width:
-                flat_pad_width.append(pair[1])
-                flat_pad_width.append(pair[0])
-            flat_pad_width = flat_pad_width[::-1]
-            return pad(tensor, flat_pad_width, "constant", 0)
-
-        def group_cores(core1, core2):
-            d = len(core1.shape)
-            r = core1.shape
-
-            new_core = core1
-            to_concat = core2
-
-            for i in range(d):
-                to_concat = pad(to_concat, [(0, r[j]) if j == i - 1 else (0, 0) for j in range(d)],
-                                     constant_values=0)
-                new_core = torch.cat([new_core, to_concat], axis=i)
-
-            return new_core
-
-        def g(T1, core, factors):
-            new_factors = [torch.cat([T1.factors[i], factors[i]], axis=1) for i in range(T1.ndim)]
-            new_core = group_cores(core, T1.core)
-
-            T = Tucker(new_core, new_factors)
-            return func(T)
-
-        fs = [torch.zeros_like(T.factors[i]) for i in range(T.ndim)]
-        torch.autograd.backward(g(T, T.core, fs))
-        dS = T.core.grad
-        dU = [fs[i].grad for i in range(3)]
-        dU = [dU[i] - T.factors[i] @ (T.factors[i].T @ dU[i]) for i in range(len(dU))]
-        return Tucker(group_cores(dS, T.core), [torch.cat([T.factors[i], dU[i]], axis=1) for i in range(T.ndim)])
-
-    def _restore_grad(self, idx, T):
-        if len(self.batches) == 0:
-            for i, batch in enumerate(self.dataloader):
-                if i in self.idx:
-                    self.batches.append(batch)
-                if len(self.batches) == len(self.idx):
-                    break
-        features, targets = self.batches[idx]
-        features = features.to(self.model.device)
-        targets = targets.to(self.model.device).float()
-        predictions, loss_fn = self.model(features[:, 0], features[:, 1])
-        loss = self.loss(predictions, targets)
-        func = lambda T: loss_fn(T, targets)
-        return self._grad(func, T)
+        self.fit_count = 0
 
 
 

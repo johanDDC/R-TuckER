@@ -14,7 +14,7 @@ EMBEDDINGS_DIM = (200, 200) # entity_dim, relation_dim
 # DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEVICE = "cpu" if torch.cuda.is_available() else "cpu"
 EPOCHES = 500
-LR = 1e-2 # start learning rate
+LR = 10# start learning rate
 MANIFOLD_RANK = 50
 
 if __name__ == '__main__':
@@ -22,7 +22,7 @@ if __name__ == '__main__':
     entity_vocab = {data.entities[i]: i for i in range(len(data.entities))}
     relation_vocab = {data.relations[i]: i for i in range(len(data.relations))}
 
-    train_dataset = KG_dataset(data.train_data, entity_vocab, relation_vocab, label_smoothing=0.1)
+    train_dataset = KG_dataset(data.train_data, entity_vocab, relation_vocab, label_smoothing=0.3)
     train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE[0], shuffle=True)
 
     test_dataset = KG_dataset(data.test_data, entity_vocab, relation_vocab, test_set=True)
@@ -36,7 +36,7 @@ if __name__ == '__main__':
     # model = torch.load("rk_50_epoch_5.pt")
     # model.to(DEVICE)
     # optimizer = R_TuckEROptimizer(model.parameters(), model, MANIFOLD_RANK, LR)
-    optimizer = RSVRG(model.parameters(), model, MANIFOLD_RANK, LR, train_dataloader)
+    optimizer = RSVRG(model.parameters(), model, MANIFOLD_RANK, LR, len(train_dataloader), memory=2)
     optimizer.idx[0] = 2
     optimizer.idx[1] = 3
     a = 4
@@ -52,10 +52,16 @@ if __name__ == '__main__':
             optimizer.fit(loss_fn, targets)
             loss = optimizer.loss(predictions, targets)
             losses.append(loss.item())
-            print("\r", np.round(np.mean(losses), 4), sep="", end="")
+            print("\r", np.round(np.mean(losses), 7), sep="", end="")
             if j == a:
                 optimizer.step()
+                optimizer.idx[0] = 2
+                optimizer.idx[1] = 3
+                j = 0
+                break
             j += 1
+        print("\r", np.round(np.mean(losses), 7), sep="")
+        continue
         optimizer.step()
 
         model.eval()

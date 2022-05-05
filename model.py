@@ -25,17 +25,15 @@ class R_TuckER(torch.nn.Module):
             rank = [rank] * 3
 
         self.S = backend.randn((shape[0], rank[0]), dtype=torch.float32)
-        self.S = Variable(self.S, requires_grad = True)
         self.R = backend.randn((shape[1], rank[1]), dtype=torch.float32)
-        self.R = Variable(self.R, requires_grad = True)
         self.core = backend.randn(rank, dtype=torch.float32)
-        self.core = Variable(self.core, requires_grad=True)
         self.tucker = Tucker(self.core, [self.S, self.R, self.S])
         self.device = "cpu"
 
         self.bn_0 = nn.BatchNorm1d(rank[0])
         self.bn_1 = nn.BatchNorm1d(rank[1])
-        self.loss = nn.BCELoss(reduction="sum")
+        # self.loss = nn.BCELoss(reduction="sum")
+        self.loss = nn.BCELoss()
 
 
     def init(self, rank):
