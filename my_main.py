@@ -9,12 +9,12 @@ from utils import R_TuckEROptimizer, filter_predictions, compute_metrics, RSVRG
 
 from tucker_riemopt import set_backend
 
-BATCH_SIZE = (64, 64) # train_size, test_size
+BATCH_SIZE = (1, 64) # train_size, test_size
 EMBEDDINGS_DIM = (200, 200) # entity_dim, relation_dim
 # DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEVICE = "cpu" if torch.cuda.is_available() else "cpu"
 EPOCHES = 500
-LR = 10# start learning rate
+LR = 1e-3# start learning rate
 MANIFOLD_RANK = 50
 
 if __name__ == '__main__':
@@ -35,10 +35,10 @@ if __name__ == '__main__':
     # torch.save(model, "model.pt")
     # model = torch.load("rk_50_epoch_5.pt")
     # model.to(DEVICE)
-    # optimizer = R_TuckEROptimizer(model.parameters(), model, MANIFOLD_RANK, LR)
-    optimizer = RSVRG(model.parameters(), model, MANIFOLD_RANK, LR, len(train_dataloader), memory=2)
-    optimizer.idx[0] = 2
-    optimizer.idx[1] = 3
+    optimizer = R_TuckEROptimizer(model.parameters(), model, MANIFOLD_RANK, "Optimal")
+    # optimizer = RSVRG(model.parameters(), model, MANIFOLD_RANK, LR, len(train_dataloader), memory=2)
+    # optimizer.idx[0] = 2
+    # optimizer.idx[1] = 3
     a = 4
     j = 0
     for epoch in range(1, EPOCHES + 1):
@@ -52,17 +52,13 @@ if __name__ == '__main__':
             optimizer.fit(loss_fn, targets)
             loss = optimizer.loss(predictions, targets)
             losses.append(loss.item())
+            # optimizer.step()
             print("\r", np.round(np.mean(losses), 7), sep="", end="")
-            if j == a:
-                optimizer.step()
-                optimizer.idx[0] = 2
-                optimizer.idx[1] = 3
-                j = 0
-                break
-            j += 1
+            optimizer.step()
+            break
         print("\r", np.round(np.mean(losses), 7), sep="")
         continue
-        optimizer.step()
+        # optimizer.step()
 
         model.eval()
         total_preds = torch.Tensor().to(DEVICE)

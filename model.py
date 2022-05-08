@@ -24,24 +24,27 @@ class R_TuckER(torch.nn.Module):
         if type(rank) is int:
             rank = [rank] * 3
 
-        self.S = backend.randn((shape[0], rank[0]), dtype=torch.float32)
-        self.R = backend.randn((shape[1], rank[1]), dtype=torch.float32)
-        self.core = backend.randn(rank, dtype=torch.float32)
-        self.tucker = Tucker(self.core, [self.S, self.R, self.S])
+
+        self.tucker = Tucker(backend.randn(rank, dtype=torch.float32),
+                             [backend.randn((shape[i % 2], rank[i]), dtype=torch.float32) for i in range(len(rank))])
         self.device = "cpu"
 
         self.bn_0 = nn.BatchNorm1d(rank[0])
         self.bn_1 = nn.BatchNorm1d(rank[1])
-        # self.loss = nn.BCELoss(reduction="sum")
-        self.loss = nn.BCELoss()
+        self.loss = nn.BCELoss(reduction="sum")
+        # self.loss = nn.BCELoss()
 
 
     def init(self, rank):
-        uniform_(self.core, -1, 1)
+        # xavier_normal_(self.tucker.core)
+        # self.tucker = Tucker.full2tuck(self.tucker, rank)
+        uniform_(self.tucker.core, -1, 1)
         # normal_(self.S)
         # normal_(self.R)
-        xavier_normal_(self.S)
-        xavier_normal_(self.R)
+        # xavier_normal_(self.tucker.factors[0])
+        # xavier_normal_(self.tucker.factors[1])
+        # xavier_normal_(self.tucker.factors[2])
+        # xavier_normal_(self.R)
         # xavier_normal_(self.core)
 
     def set_core(self, T):
@@ -52,10 +55,10 @@ class R_TuckER(torch.nn.Module):
         batch_arange = torch.arange(batch_size).to(self.device)
         subject_idx = torch.vstack([batch_arange, subject_idx])
         subject_idx = sparse_coo_tensor(subject_idx, torch.ones(subject_idx.shape[1]),
-                                        (batch_size, self.S.shape[0]), dtype=torch.float32, device=self.device)
+                                        (batch_size, self.tucker.factors[0].shape[0]), dtype=torch.float32, device=self.device)
         relation_idx = torch.vstack([batch_arange, relation_idx])
         relation_idx = sparse_coo_tensor(relation_idx, torch.ones(relation_idx.shape[1]),
-                                        (batch_size, self.R.shape[0]), dtype=torch.float32, device=self.device)
+                                        (batch_size, self.tucker.factors[1].shape[0]), dtype=torch.float32, device=self.device)
         pred = self.tucker.k_mode_product(0, subject_idx).k_mode_product(1, relation_idx)
         # pred.factors[0] = self.bn_0(pred.factors[0])
         # pred.factors[1] = self.bn_1(pred.factors[1])
@@ -85,5 +88,5 @@ class R_TuckER(torch.nn.Module):
         else:
             self.cpu()
             self.device = "cpu"
-        self.tucker = Tucker(self.core.to(device),
-                             [self.S.to(device), self.R.to(device), self.S.to(device)])
+        self.tucker = Tucker(self.tucker.core.to(device),
+                             [factor.to(device) for factor in self.tucker.factors])
