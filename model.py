@@ -19,7 +19,7 @@ class R_TuckER(torch.nn.Module):
         rank: Sequence[int]
             rank of the manifold
         """
-        super(R_TuckER, self).__init__()
+        super().__init__()
 
         self.S = nn.Embedding(data_count[0], embeddings_dim[0])
         self.R = nn.Embedding(data_count[1], embeddings_dim[1])

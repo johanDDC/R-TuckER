@@ -3,9 +3,11 @@ from torch.utils.data import DataLoader
 from torch import tensor, FloatTensor
 from time import time
 
+import numpy as np
+
 from load import Data, KG_dataset
 from model import R_TuckER
-from utils import R_TuckEROptimizer, filter_predictions, compute_metrics, RCGOptimizer
+from utils import R_TuckEROptimizer, filter_predictions, compute_metrics
 
 from tucker_riemopt import set_backend
 
@@ -15,10 +17,10 @@ EMBEDDINGS_DIM = (200, 200) # entity_dim, relation_dim
 DEVICE = "cpu" if torch.cuda.is_available() else "cpu"
 EPOCHES = 500
 LR = 1e-3 # start learning rate
-MANIFOLD_RANK = 10
+MANIFOLD_RANK = 50
 
 if __name__ == '__main__':
-    data = Data()
+    data = Data(data_dir="data/WN18/")
     entity_vocab = {data.entities[i]: i for i in range(len(data.entities))}
     relation_vocab = {data.relations[i]: i for i in range(len(data.relations))}
 
@@ -39,6 +41,7 @@ if __name__ == '__main__':
     # optimizer = RCGOptimizer(model.parameters(), model, MANIFOLD_RANK, LR)
     for epoch in range(1, EPOCHES + 1):
         model.train()
+        losses = []
         for features, targets in train_dataloader:
             features = features.to(DEVICE)
             targets = targets.to(DEVICE).float()
@@ -46,7 +49,9 @@ if __name__ == '__main__':
             predictions, loss_fn = model(features[:, 0], features[:, 1])
             optimizer.fit(loss_fn, targets)
             loss = optimizer.loss(predictions, targets)
+            losses.append(loss.item())
             optimizer.step()
+            print(np.round(np.mean(losses), 7))
 
         model.eval()
         total_preds = torch.Tensor().to(DEVICE)
