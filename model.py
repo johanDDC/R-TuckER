@@ -29,8 +29,14 @@ class R_TuckER(torch.nn.Module):
                              [backend.randn((shape[i % 2], rank[i]), dtype=torch.float32) for i in range(len(rank))])
         self.device = "cpu"
 
-        self.bn_0 = nn.BatchNorm1d(rank[0])
-        self.bn_1 = nn.BatchNorm1d(rank[1])
+        self.red = nn.BatchNorm1d(rank[0])
+
+        self.bn_0 = nn.BatchNorm1d(rank[0], affine=False)
+        self.bn_1 = nn.BatchNorm1d(rank[1], affine=False)
+
+        self.bn_0_backward = nn.BatchNorm1d(2 * rank[0], affine=False)
+        self.bn_1_backward = nn.BatchNorm1d(2 * rank[1], affine=False)
+
         self.loss = nn.BCELoss(reduction="sum")
         # self.loss = nn.BCELoss()
 
@@ -75,8 +81,8 @@ class R_TuckER(torch.nn.Module):
 
         def loss_fn(T, targets):
             pred = T.k_mode_product(0, subject_idx).k_mode_product(1, relation_idx)
-            pred.factors[0] = self.bn_0(pred.factors[0])
-            pred.factors[1] = self.bn_1(pred.factors[1])
+            pred.factors[0] = self.bn_0_backward(pred.factors[0])
+            pred.factors[1] = self.bn_1_backward(pred.factors[1])
             pred = pred.full()
             pred = torch.sigmoid(pred)
             preds = pred[0, 0, :].reshape(1, -1)
