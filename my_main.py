@@ -9,13 +9,13 @@ from utils import R_TuckEROptimizer, filter_predictions, compute_metrics, RSVRG
 
 from tucker_riemopt import set_backend
 
-BATCH_SIZE = (1, 64) # train_size, test_size
+BATCH_SIZE = (64, 64) # train_size, test_size
 EMBEDDINGS_DIM = (200, 200) # entity_dim, relation_dim
 # DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DEVICE = "cpu" if torch.cuda.is_available() else "cpu"
 EPOCHES = 500
 LR = 1e-3# start learning rate
-MANIFOLD_RANK = 50
+MANIFOLD_RANK = 200
 
 if __name__ == '__main__':
     data = Data()
@@ -23,7 +23,7 @@ if __name__ == '__main__':
     relation_vocab = {data.relations[i]: i for i in range(len(data.relations))}
 
     train_dataset = KG_dataset(data.train_data, entity_vocab, relation_vocab, label_smoothing=0.3)
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE[0], shuffle=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE[0], shuffle=False)
 
     test_dataset = KG_dataset(data.test_data, entity_vocab, relation_vocab, test_set=True)
     test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE[1], shuffle=False)
@@ -31,11 +31,13 @@ if __name__ == '__main__':
     set_backend("pytorch")
     model = R_TuckER((len(entity_vocab), len(relation_vocab)), MANIFOLD_RANK)
     model.init(MANIFOLD_RANK)
+    # pretrained = torch.load("rk_50_epoch_1.pt")
+    # model.fine_tune(pretrained)
     model.to(DEVICE)
     # torch.save(model, "model.pt")
     # model = torch.load("rk_50_epoch_5.pt")
     # model.to(DEVICE)
-    optimizer = R_TuckEROptimizer(model.parameters(), model, MANIFOLD_RANK, "Optimal")
+    optimizer = R_TuckEROptimizer(model.parameters(), model, MANIFOLD_RANK, 1e-3)
     # optimizer = RSVRG(model.parameters(), model, MANIFOLD_RANK, LR, len(train_dataloader), memory=2)
     # optimizer.idx[0] = 2
     # optimizer.idx[1] = 3

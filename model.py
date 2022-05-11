@@ -47,6 +47,11 @@ class R_TuckER(torch.nn.Module):
         # xavier_normal_(self.R)
         # xavier_normal_(self.core)
 
+    def fine_tune(self, model):
+        core = Tucker(model.core.core.to(self.device), [factor.to(self.device) for factor in model.core.factors]).full()
+        self.tucker = Tucker(core,
+                             [model.S.weight.to(self.device), model.R.weight.to(self.device), model.S.weight.to(self.device)])
+
     def set_core(self, T):
         self.core = T
 
@@ -60,8 +65,8 @@ class R_TuckER(torch.nn.Module):
         relation_idx = sparse_coo_tensor(relation_idx, torch.ones(relation_idx.shape[1]),
                                         (batch_size, self.tucker.factors[1].shape[0]), dtype=torch.float32, device=self.device)
         pred = self.tucker.k_mode_product(0, subject_idx).k_mode_product(1, relation_idx)
-        # pred.factors[0] = self.bn_0(pred.factors[0])
-        # pred.factors[1] = self.bn_1(pred.factors[1])
+        pred.factors[0] = self.bn_0(pred.factors[0])
+        pred.factors[1] = self.bn_1(pred.factors[1])
         pred = pred.full()
         pred = torch.sigmoid(pred)
         preds = pred[0, 0, :].reshape(1, -1)
@@ -70,8 +75,8 @@ class R_TuckER(torch.nn.Module):
 
         def loss_fn(T, targets):
             pred = T.k_mode_product(0, subject_idx).k_mode_product(1, relation_idx)
-            # pred.factors[0] = self.bn_0(pred.factors[0])
-            # pred.factors[1] = self.bn_1(pred.factors[1])
+            pred.factors[0] = self.bn_0(pred.factors[0])
+            pred.factors[1] = self.bn_1(pred.factors[1])
             pred = pred.full()
             pred = torch.sigmoid(pred)
             preds = pred[0, 0, :].reshape(1, -1)
