@@ -36,7 +36,6 @@ class R_TuckEROptimizer(Optimizer):
         if self.lr:
             self.alpha = self.line_search.line_search(func, x_k, self.riemann_grad, -self.riemann_grad,
                                                       self.rank, 1)
-            print(self.alpha)
 
     @torch.no_grad()
     def step(self, closure=None):
