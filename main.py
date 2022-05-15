@@ -86,39 +86,45 @@ def train_one_batch(X, y, T_k: Tucker):
     return loss_fn(preds, y)
 
 
+# stochastic grad setting
 def train_one_epoch(train_dataloader, T_k):
+    loss_fn = nn.BCELoss()
     rank = T_k.rank
     losses = []
-    alpha = 10000
     grad = None
-    mean = 1
+    total_preds = torch.Tensor([], dtype=torch.float32, device=DEVICE)
+    total_targets = torch.Tensor([], dtype=torch.float32, device=DEVICE)
     with tqdm(total=len(train_dataloader), file=sys.stdout) as prbar:
         for batch_id, (features, targets) in enumerate(train_dataloader):
             features = features.to(DEVICE)
             targets = targets.to(DEVICE).float()
+            total_targets = torch.cat([total_targets, targets], dim=1)
             func = lambda T: train_one_batch(features, targets, T)
 
             losses.append(func(T_k).item())
+            total_preds = torch.cat([total_preds, eval_batch(features, T_k)], dim=1)
             if grad is None:
-              grad = mean * compute_gradient_projection(func, T_k)
+                grad = compute_gradient_projection(func, T_k)
             else:
-              grad += mean * compute_gradient_projection(func, T_k)
-              grad = grad.round(2 * rank)
-              grad = Tucker(grad.core.detach(), [factor.detach() for factor in grad.factors])
-
+                grad += compute_gradient_projection(func, T_k)
+                grad = grad.round(2 * rank)
+                grad = Tucker(grad.core.detach(), [factor.detach() for factor in grad.factors])
 
             prbar.set_description(
               f"Last loss:\t {np.round(losses[-1], 7)}, "
               f"mean loss:\t {np.round(np.mean(losses), 7)}"
             )
             prbar.update(1)
+
         with torch.no_grad():
-            alpha = __custom_line_search(func, T_k, -grad, rank, 2 * alpha)
-            # alpha = __armijo(func, T_k, -grad, rank, 2 * alpha)
+            func = loss_fn(total_preds, total_targets)
+            grad = 1 / (grad.norm(qr_based=True)) * grad
+            alpha = __custom_line_search(func, T_k, -grad, rank, 10000)
+            # alpha = __armijo(func, T_k, -grad, rank, 10000)
             T_k -= alpha * grad
             T_k = T_k.round(rank)
 
-    return T_k
+    return T_k, np.mean(losses)
 
 
 def evaluate(test_dataloader, T_k):
@@ -188,4 +194,4 @@ if __name__ == '__main__':
     xavier_normal_(T_0.factors[1])
     xavier_normal_(T_0.factors[2])
 
-    train(train_dataloader, T_0)
+    T = train(train_dataloader, test_dataloader, T_0)
