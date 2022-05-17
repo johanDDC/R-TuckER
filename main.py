@@ -12,7 +12,7 @@ from load import Data, KG_dataset
 from utils import filter_predictions, compute_metrics
 
 from tucker_riemopt import Tucker, set_backend, backend
-from tucker_riemopt.riemopt import compute_gradient_projection
+from tucker_riemopt.riemopt import compute_gradient_projection, vector_transport
 
 # DEVICE = "cuda"
 
@@ -127,6 +127,63 @@ def train_one_epoch(train_dataloader, T_k):
     return T_k, np.mean(losses)
 
 
+# CG setting
+def train_one_epoch(train_dataloader, T_k, cg_config = None):
+    loss_fn = nn.BCELoss()
+    rank = T_k.rank
+    losses = []
+    grad = None
+    total_preds = torch.Tensor([], dtype=torch.float32, device=DEVICE)
+    total_targets = torch.Tensor([], dtype=torch.float32, device=DEVICE)
+    if cg_config is None:
+        cg_config = {
+            "prev_grad_norm": None,
+            "curr_grad_norm": None,
+            "alpha": 10000,
+            "conj_dir": None
+        }
+    with tqdm(total=len(train_dataloader), file=sys.stdout) as prbar:
+        for batch_id, (features, targets) in enumerate(train_dataloader):
+            features = features.to(DEVICE)
+            targets = targets.to(DEVICE).float()
+            total_targets = torch.cat([total_targets, targets], dim=1)
+            func = lambda T: train_one_batch(features, targets, T)
+
+            losses.append(func(T_k).item())
+            total_preds = torch.cat([total_preds, eval_batch(features, T_k)], dim=1)
+            if grad is None:
+                grad = compute_gradient_projection(func, T_k)
+            else:
+                grad += compute_gradient_projection(func, T_k)
+                grad = grad.round(2 * rank)
+                grad = Tucker(grad.core.detach(), [factor.detach() for factor in grad.factors])
+
+            prbar.set_description(
+              f"Last loss:\t {np.round(losses[-1], 7)}, "
+              f"mean loss:\t {np.round(np.mean(losses), 7)}"
+            )
+            prbar.update(1)
+
+        with torch.no_grad():
+            if cg_config["conj_dir"] is None:
+                cg_config["conj_dir"] = -grad
+                cg_config["curr_grad_norm"] = grad.norm(qr_based=True)
+            if cg_config["curr_grad_norm"] is None:
+                cg_config["curr_grad_norm"] = grad.norm(qr_based=True)
+                beta = cg_config["curr_grad_norm"] / cg_config["prev_grad_norm"]
+                cg_config["conj_dir"] = -grad + (beta ** 2) * vector_transport(None, T_k, cg_config["conj_dir"])
+                cg_config["conj_dir"] = cg_config["conj_dir"].round(grad.rank)
+
+            func = loss_fn(total_preds, total_targets)
+            alpha = cg_config["alpha"] = __custom_line_search(func, T_k, cg_config["conj_dir"], rank, cg_config["alpha"])
+            T_k += alpha * cg_config["conj_dir"]
+            T_k = T_k.round(rank)
+            cg_config["prev_grad_norm"] = cg_config["curr_grad_norm"]
+            cg_config["curr_grad_norm"] = None
+
+    return T_k, np.mean(losses), cg_config
+
+
 def evaluate(test_dataloader, T_k):
   metrics = None
   loss_fn = nn.BCELoss()
@@ -165,8 +222,9 @@ def train(train_dataloader, test_dataloader, T_0, baselines=None, losses=None, m
         "hits_10": []
     } if not metrics else metrics
     T_k = deepcopy(T_0)
+    config = None
     for epoch in range(start_epoch, EPOCHES + start_epoch):
-        T_k = train_one_epoch(train_dataloader, T_k)
+        T_k, loss, config = train_one_epoch(train_dataloader, T_k, config)
         local_metrics, mean_loss = evaluate(test_dataloader, T_k)
 
 
