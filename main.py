@@ -87,101 +87,155 @@ def train_one_batch(X, y, T_k: Tucker):
 
 
 # stochastic grad setting
-def train_one_epoch(train_dataloader, T_k):
-    loss_fn = nn.BCELoss()
-    rank = T_k.rank
-    losses = []
-    grad = None
-    total_preds = torch.Tensor([], dtype=torch.float32, device=DEVICE)
-    total_targets = torch.Tensor([], dtype=torch.float32, device=DEVICE)
-    with tqdm(total=len(train_dataloader), file=sys.stdout) as prbar:
-        for batch_id, (features, targets) in enumerate(train_dataloader):
-            features = features.to(DEVICE)
-            targets = targets.to(DEVICE).float()
-            total_targets = torch.cat([total_targets, targets], dim=1)
-            func = lambda T: train_one_batch(features, targets, T)
-
-            losses.append(func(T_k).item())
-            total_preds = torch.cat([total_preds, eval_batch(features, T_k)], dim=1)
-            if grad is None:
-                grad = compute_gradient_projection(func, T_k)
-            else:
-                grad += compute_gradient_projection(func, T_k)
-                grad = grad.round(2 * rank)
-                grad = Tucker(grad.core.detach(), [factor.detach() for factor in grad.factors])
-
-            prbar.set_description(
-              f"Last loss:\t {np.round(losses[-1], 7)}, "
-              f"mean loss:\t {np.round(np.mean(losses), 7)}"
-            )
-            prbar.update(1)
-
-        with torch.no_grad():
-            func = loss_fn(total_preds, total_targets)
-            grad = 1 / (grad.norm(qr_based=True)) * grad
-            alpha = __custom_line_search(func, T_k, -grad, rank, 10000)
-            # alpha = __armijo(func, T_k, -grad, rank, 10000)
-            T_k -= alpha * grad
-            T_k = T_k.round(rank)
-
-    return T_k, np.mean(losses)
+# def train_one_epoch(train_dataloader, T_k):
+#     loss_fn = nn.BCELoss()
+#     rank = T_k.rank
+#     losses = []
+#     grad = None
+#     total_preds = torch.Tensor([], dtype=torch.float32, device=DEVICE)
+#     total_targets = torch.Tensor([], dtype=torch.float32, device=DEVICE)
+#     with tqdm(total=len(train_dataloader), file=sys.stdout) as prbar:
+#         for batch_id, (features, targets) in enumerate(train_dataloader):
+#             features = features.to(DEVICE)
+#             targets = targets.to(DEVICE).float()
+#             total_targets = torch.cat([total_targets, targets], dim=1)
+#             func = lambda T: train_one_batch(features, targets, T)
+#
+#             losses.append(func(T_k).item())
+#             total_preds = torch.cat([total_preds, eval_batch(features, T_k)], dim=1)
+#             if grad is None:
+#                 grad = compute_gradient_projection(func, T_k)
+#             else:
+#                 grad += compute_gradient_projection(func, T_k)
+#                 grad = grad.round(2 * rank)
+#                 grad = Tucker(grad.core.detach(), [factor.detach() for factor in grad.factors])
+#
+#             prbar.set_description(
+#               f"Last loss:\t {np.round(losses[-1], 7)}, "
+#               f"mean loss:\t {np.round(np.mean(losses), 7)}"
+#             )
+#             prbar.update(1)
+#
+#         with torch.no_grad():
+#             func = loss_fn(total_preds, total_targets)
+#             grad = 1 / (grad.norm(qr_based=True)) * grad
+#             alpha = __custom_line_search(func, T_k, -grad, rank, 10000)
+#             # alpha = __armijo(func, T_k, -grad, rank, 10000)
+#             T_k -= alpha * grad
+#             T_k = T_k.round(rank)
+#
+#     return T_k, np.mean(losses)
 
 
 # CG setting
-def train_one_epoch(train_dataloader, T_k, cg_config = None):
-    loss_fn = nn.BCELoss()
+# def train_one_epoch(train_dataloader, T_k, cg_config = None):
+#     loss_fn = nn.BCELoss()
+#     rank = T_k.rank
+#     losses = []
+#     grad = None
+#     total_preds = torch.Tensor([], dtype=torch.float32, device=DEVICE)
+#     total_targets = torch.Tensor([], dtype=torch.float32, device=DEVICE)
+#     if cg_config is None:
+#         cg_config = {
+#             "prev_grad_norm": None,
+#             "curr_grad_norm": None,
+#             "alpha": 10000,
+#             "conj_dir": None
+#         }
+#     with tqdm(total=len(train_dataloader), file=sys.stdout) as prbar:
+#         for batch_id, (features, targets) in enumerate(train_dataloader):
+#             features = features.to(DEVICE)
+#             targets = targets.to(DEVICE).float()
+#             total_targets = torch.cat([total_targets, targets], dim=1)
+#             func = lambda T: train_one_batch(features, targets, T)
+#
+#             losses.append(func(T_k).item())
+#             total_preds = torch.cat([total_preds, eval_batch(features, T_k)], dim=1)
+#             if grad is None:
+#                 grad = compute_gradient_projection(func, T_k)
+#             else:
+#                 grad += compute_gradient_projection(func, T_k)
+#                 grad = grad.round(2 * rank)
+#                 grad = Tucker(grad.core.detach(), [factor.detach() for factor in grad.factors])
+#
+#             prbar.set_description(
+#               f"Last loss:\t {np.round(losses[-1], 7)}, "
+#               f"mean loss:\t {np.round(np.mean(losses), 7)}"
+#             )
+#             prbar.update(1)
+#
+#         with torch.no_grad():
+#             if cg_config["conj_dir"] is None:
+#                 cg_config["conj_dir"] = -grad
+#                 cg_config["curr_grad_norm"] = grad.norm(qr_based=True)
+#             if cg_config["curr_grad_norm"] is None:
+#                 cg_config["curr_grad_norm"] = grad.norm(qr_based=True)
+#                 beta = cg_config["curr_grad_norm"] / cg_config["prev_grad_norm"]
+#                 cg_config["conj_dir"] = -grad + (beta ** 2) * vector_transport(None, T_k, cg_config["conj_dir"])
+#                 cg_config["conj_dir"] = cg_config["conj_dir"].round(grad.rank)
+#
+#             func = loss_fn(total_preds, total_targets)
+#             alpha = cg_config["alpha"] = __custom_line_search(func, T_k, cg_config["conj_dir"], rank, cg_config["alpha"])
+#             T_k += alpha * cg_config["conj_dir"]
+#             T_k = T_k.round(rank)
+#             cg_config["prev_grad_norm"] = cg_config["curr_grad_norm"]
+#             cg_config["curr_grad_norm"] = None
+#
+#     return T_k, np.mean(losses), cg_config
+
+
+# SVRG setting
+def train_one_epoch(train_dataloader, T_k, svrg_config = None):
     rank = T_k.rank
     losses = []
-    grad = None
-    total_preds = torch.Tensor([], dtype=torch.float32, device=DEVICE)
-    total_targets = torch.Tensor([], dtype=torch.float32, device=DEVICE)
-    if cg_config is None:
-        cg_config = {
-            "prev_grad_norm": None,
-            "curr_grad_norm": None,
+    full_grad = None
+    if svrg_config is None:
+        svrg_config = {
             "alpha": 10000,
-            "conj_dir": None
+            "memory": 10
         }
+    # idx = np.random.choice(np.arange(0, len(train_dataloader)), svrg_config["memory"], False)
+    idx = [1, 3]
     with tqdm(total=len(train_dataloader), file=sys.stdout) as prbar:
         for batch_id, (features, targets) in enumerate(train_dataloader):
             features = features.to(DEVICE)
             targets = targets.to(DEVICE).float()
-            total_targets = torch.cat([total_targets, targets], dim=1)
             func = lambda T: train_one_batch(features, targets, T)
 
             losses.append(func(T_k).item())
-            total_preds = torch.cat([total_preds, eval_batch(features, T_k)], dim=1)
-            if grad is None:
-                grad = compute_gradient_projection(func, T_k)
+            if full_grad is None:
+                full_grad = compute_gradient_projection(func, T_k)
             else:
-                grad += compute_gradient_projection(func, T_k)
-                grad = grad.round(2 * rank)
-                grad = Tucker(grad.core.detach(), [factor.detach() for factor in grad.factors])
+                full_grad += compute_gradient_projection(func, T_k)
+                full_grad = full_grad.round(2 * rank)
+                full_grad = Tucker(full_grad.core.detach(), [factor.detach() for factor in full_grad.factors])
 
             prbar.set_description(
-              f"Last loss:\t {np.round(losses[-1], 7)}, "
-              f"mean loss:\t {np.round(np.mean(losses), 7)}"
+                f"Last loss:\t {np.round(losses[-1], 7)}, "
+                f"mean loss:\t {np.round(np.mean(losses), 7)}"
             )
             prbar.update(1)
+            if batch_id > 4:
+                break
 
-        with torch.no_grad():
-            if cg_config["conj_dir"] is None:
-                cg_config["conj_dir"] = -grad
-                cg_config["curr_grad_norm"] = grad.norm(qr_based=True)
-            if cg_config["curr_grad_norm"] is None:
-                cg_config["curr_grad_norm"] = grad.norm(qr_based=True)
-                beta = cg_config["curr_grad_norm"] / cg_config["prev_grad_norm"]
-                cg_config["conj_dir"] = -grad + (beta ** 2) * vector_transport(None, T_k, cg_config["conj_dir"])
-                cg_config["conj_dir"] = cg_config["conj_dir"].round(grad.rank)
+    alphas = []
+    with tqdm(total=svrg_config["memory"], file=sys.stdout) as prbar:
+        for batch_id, (features, targets) in enumerate(train_dataloader):
+            if batch_id in idx:
+                features = features.to(DEVICE)
+                targets = targets.to(DEVICE).float()
+                func = lambda T: train_one_batch(features, targets, T)
+                grad = compute_gradient_projection(func, T_k)
+                v = compute_gradient_projection(func, T_k) - \
+                    vector_transport(None, T_k, grad - full_grad)
+                alpha = __custom_line_search(func, T_k, -grad, rank, svrg_config["alpha"])
+                T_k -= alpha * v
+                T_k = T_k.round(rank)
+                alphas.append(alpha)
+                prbar.update(1)
+        svrg_config["alpha"] = np.mean(alphas)
 
-            func = loss_fn(total_preds, total_targets)
-            alpha = cg_config["alpha"] = __custom_line_search(func, T_k, cg_config["conj_dir"], rank, cg_config["alpha"])
-            T_k += alpha * cg_config["conj_dir"]
-            T_k = T_k.round(rank)
-            cg_config["prev_grad_norm"] = cg_config["curr_grad_norm"]
-            cg_config["curr_grad_norm"] = None
-
-    return T_k, np.mean(losses), cg_config
+    return T_k, np.mean(losses), svrg_config
 
 
 def evaluate(test_dataloader, T_k):
