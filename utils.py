@@ -1,3 +1,6 @@
+import jax
+import jax.numpy as jnp
+
 import numpy as np
 import torch
 from torch.optim import Optimizer, Adam
@@ -186,3 +189,29 @@ def filter_predictions(predictions, targets, filter):
     targets[targets == 1] = 0
     return predictions.scatter_(1, filter, interest_prediction_vals), \
             targets.scatter_(1, filter, torch.ones(interest_prediction_vals.shape, device=targets.device))
+
+
+def BCELoss(x, y, reduction="mean"):
+    loss = y * jnp.log(x) + (1 - y) * jnp.log(1 - x)
+    loss *= -1
+
+    if reduction == "mean":
+        return loss.mean()
+    elif reduction == "sum":
+        return loss.sum()
+    else:
+        return loss
+
+
+class SparseMatrix:
+    def __init__(self, inds, vals, shape):
+        self.inds = inds
+        self.vals = vals
+        self.shape = shape
+
+    def __matmul__(self, other):
+        rows, cols = self.inds
+        in_ = other.take(cols, axis=0)
+        prod = in_ * self.vals[:, None]
+        res = jax.ops.segment_sum(prod, rows, self.shape[0])
+        return res

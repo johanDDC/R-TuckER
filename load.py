@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from torch.utils.data import Dataset
+from torch.utils import data
 from torch import tensor
 import numpy as np
 
@@ -34,7 +34,7 @@ class Data:
         entities = sorted(list(set([d[0] for d in data]+[d[2] for d in data])))
         return entities
 
-class KG_dataset(Dataset):
+class KG_dataset(data.Dataset):
     def __init__(self, data, entity_vocab, relations_vocab, label_smoothing=None, test_set=False):
         self.data = data
         self.data_index = [(entity_vocab[self.data[i][0]], relations_vocab[self.data[i][1]],
@@ -66,7 +66,7 @@ class KG_dataset(Dataset):
 
 
     def __getitem__(self, idx):
-        targets = np.zeros(self.size[1])
+        targets = np.zeros(self.size[1], dtype=np.float32)
         if self.test_set:
             features = self.data_index[idx]
             feature_pair = (features[0], features[1])
@@ -76,4 +76,14 @@ class KG_dataset(Dataset):
             targets[self.entity_relation_vocab[features]] = 1
         if self.label_smoothing:
             targets = (1 - self.label_smoothing) * targets + 1 / self.size[1]
-        return tensor(features), targets
+        return np.array(features), targets
+
+
+def numpy_collate(batch):
+    if isinstance(batch[0], np.ndarray):
+        return np.stack(batch)
+    elif isinstance(batch[0], (tuple,list)):
+        transposed = zip(*batch)
+        return [numpy_collate(samples) for samples in transposed]
+    else:
+        return np.array(batch)

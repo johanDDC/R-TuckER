@@ -1,18 +1,26 @@
 import torch
 from torch import nn, sparse_coo_tensor
-from torch.utils.data import DataLoader
 from torch.nn.init import xavier_normal_, uniform_
 
+import jax.numpy as jnp
+import jax.nn as jnn
+from jax import grad, jit, vmap, random
+from jax.nn.initializers import glorot_normal, glorot_uniform
+from jax.config import config; config.update("jax_enable_x64", False)
+
 import numpy as np
+from scipy.sparse import coo_matrix
 from copy import deepcopy
+
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 import sys
 
-from load import Data, KG_dataset
-from utils import filter_predictions, compute_metrics
+from load import Data, KG_dataset, numpy_collate
+from utils import filter_predictions, compute_metrics, BCELoss, SparseMatrix
 
-from tucker_riemopt import Tucker, set_backend, backend
-from tucker_riemopt.riemopt import compute_gradient_projection, vector_transport
+from tucker_riemopt import Tucker
+from tucker_riemopt.riemopt import compute_gradient_projection
 
 # DEVICE = "cuda"
 
@@ -22,251 +30,118 @@ DEVICE = "cpu"
 MANIFOLD_RANK = 50
 
 
-def __armijo(func, x_k: Tucker, d_k, rank, previous_alpha=1):
+def __armijo(func, previous_alpha=1, threshold=1e-4):
     alpha = previous_alpha
-    armijo_threshold = 1e-4 * alpha * d_k.norm(qr_based=True) ** 2
-    fx = func(x_k)
+    fx = func(0)
     iters = 0
-    while fx - func((x_k + alpha * d_k).round(rank)) < 0:
-        alpha /= 2
-        armijo_threshold /= 2
+    while fx - func(alpha) < threshold:
+        alpha /= 5
+        threshold /= 5
         iters += 1
         if iters > 50:
             return alpha
     return alpha
 
 
-def __custom_line_search(func, x_k: Tucker, d_k, rank, previous_alpha=1):
-    alpha = previous_alpha
-    fx = func(x_k)
-    fx_success = func((x_k + alpha * d_k).round(rank))
-    iters = 0
-    while fx <= fx_success:
-        alpha /= 2
-        fx_success = func((x_k + alpha * d_k).round(rank))
-        iters += 1
-        if iters > 30:
-            return alpha
-
-    fx = fx_success
-    prev_alpha = alpha
-    while fx_success <= fx and alpha < previous_alpha:
-        prev_alpha = alpha
-        alpha *= 1.1
-        iters += 1
-        fx_success = func((x_k + alpha * d_k).round(rank))
-        if iters > 30:
-            return alpha
-    return prev_alpha
-
-
 def eval_batch(X, T_k: Tucker):
     batch_size = X.shape[0]
-    batch_arange = torch.arange(batch_size).to(DEVICE)
-    subject_idx = torch.vstack([batch_arange, X[:, 0]])
-    subject_idx = sparse_coo_tensor(subject_idx, torch.ones(subject_idx.shape[1]),
-                                    (batch_size, T_k.factors[0].shape[0]), dtype=torch.float32,
-                                    device=DEVICE)
-    relation_idx = torch.vstack([batch_arange, X[:, 1]])
-    relation_idx = sparse_coo_tensor(relation_idx, torch.ones(relation_idx.shape[1]),
-                                     (batch_size, T_k.factors[1].shape[0]), dtype=torch.float32,
-                                     device=DEVICE)
+    batch_arange = jnp.arange(batch_size)
+    subject_idx = jnp.vstack([batch_arange, X[:, 0]])
+    subject_idx = SparseMatrix((batch_arange, X[:, 0]), jnp.ones(subject_idx.shape[1], dtype=jnp.float32),
+                               (batch_size, T_k.factors[0].shape[0]))
+    relation_idx = jnp.vstack([batch_arange, X[:, 1]])
+    relation_idx = SparseMatrix((batch_arange, X[:, 1]), jnp.ones(relation_idx.shape[1], dtype=jnp.float32),
+                               (batch_size, T_k.factors[1].shape[0]))
+
+    # subject_idx = sparse_coo_tensor(subject_idx, torch.ones(subject_idx.shape[1]),
+    #                                 (batch_size, T_k.factors[0].shape[0]), dtype=torch.float32,
+    #                                 device=DEVICE)
+    # relation_idx = torch.vstack([batch_arange, X[:, 1]])
+    # relation_idx = sparse_coo_tensor(relation_idx, torch.ones(relation_idx.shape[1]),
+    #                                  (batch_size, T_k.factors[1].shape[0]), dtype=torch.float32,
+    #                                  device=DEVICE)
     predictions = T_k.k_mode_product(0, subject_idx).k_mode_product(1, relation_idx)
-    predictions = torch.sigmoid(predictions.full())
+    predictions = jnn.sigmoid(predictions.full())
     preds = predictions[0, 0, :].reshape(1, -1)
     for i in range(1, predictions.shape[0]):
-        preds = torch.cat([preds, predictions[i, i, :].reshape(1, -1)], dim=0)
+        preds = jnp.concatenate([preds, predictions[i, i, :].reshape(1, -1)], axis=0)
 
     return preds
 
 
-def train_one_batch(X, y, T_k: Tucker):
-    loss_fn = nn.BCELoss()
+def train_one_batch(X, y, T_k, dropout_prob=0.2):
+    #     dropout = nn.Dropout(p=dropout_prob)
+    #     T_new = Tucker(dropout(T_k.core), T_k.factors)
     preds = eval_batch(X, T_k)
-    return loss_fn(preds, y)
+    return BCELoss(preds, y, reduction="sum")
 
 
-# stochastic grad setting
-# def train_one_epoch(train_dataloader, T_k):
-#     loss_fn = nn.BCELoss()
-#     rank = T_k.rank
-#     losses = []
-#     grad = None
-#     total_preds = torch.Tensor([], dtype=torch.float32, device=DEVICE)
-#     total_targets = torch.Tensor([], dtype=torch.float32, device=DEVICE)
-#     with tqdm(total=len(train_dataloader), file=sys.stdout) as prbar:
-#         for batch_id, (features, targets) in enumerate(train_dataloader):
-#             features = features.to(DEVICE)
-#             targets = targets.to(DEVICE).float()
-#             total_targets = torch.cat([total_targets, targets], dim=1)
-#             func = lambda T: train_one_batch(features, targets, T)
-#
-#             losses.append(func(T_k).item())
-#             total_preds = torch.cat([total_preds, eval_batch(features, T_k)], dim=1)
-#             if grad is None:
-#                 grad = compute_gradient_projection(func, T_k)
-#             else:
-#                 grad += compute_gradient_projection(func, T_k)
-#                 grad = grad.round(2 * rank)
-#                 grad = Tucker(grad.core.detach(), [factor.detach() for factor in grad.factors])
-#
-#             prbar.set_description(
-#               f"Last loss:\t {np.round(losses[-1], 7)}, "
-#               f"mean loss:\t {np.round(np.mean(losses), 7)}"
-#             )
-#             prbar.update(1)
-#
-#         with torch.no_grad():
-#             func = loss_fn(total_preds, total_targets)
-#             grad = 1 / (grad.norm(qr_based=True)) * grad
-#             alpha = __custom_line_search(func, T_k, -grad, rank, 10000)
-#             # alpha = __armijo(func, T_k, -grad, rank, 10000)
-#             T_k -= alpha * grad
-#             T_k = T_k.round(rank)
-#
-#     return T_k, np.mean(losses)
+batch_losses = None
 
 
-# CG setting
-# def train_one_epoch(train_dataloader, T_k, cg_config = None):
-#     loss_fn = nn.BCELoss()
-#     rank = T_k.rank
-#     losses = []
-#     grad = None
-#     total_preds = torch.Tensor([], dtype=torch.float32, device=DEVICE)
-#     total_targets = torch.Tensor([], dtype=torch.float32, device=DEVICE)
-#     if cg_config is None:
-#         cg_config = {
-#             "prev_grad_norm": None,
-#             "curr_grad_norm": None,
-#             "alpha": 10000,
-#             "conj_dir": None
-#         }
-#     with tqdm(total=len(train_dataloader), file=sys.stdout) as prbar:
-#         for batch_id, (features, targets) in enumerate(train_dataloader):
-#             features = features.to(DEVICE)
-#             targets = targets.to(DEVICE).float()
-#             total_targets = torch.cat([total_targets, targets], dim=1)
-#             func = lambda T: train_one_batch(features, targets, T)
-#
-#             losses.append(func(T_k).item())
-#             total_preds = torch.cat([total_preds, eval_batch(features, T_k)], dim=1)
-#             if grad is None:
-#                 grad = compute_gradient_projection(func, T_k)
-#             else:
-#                 grad += compute_gradient_projection(func, T_k)
-#                 grad = grad.round(2 * rank)
-#                 grad = Tucker(grad.core.detach(), [factor.detach() for factor in grad.factors])
-#
-#             prbar.set_description(
-#               f"Last loss:\t {np.round(losses[-1], 7)}, "
-#               f"mean loss:\t {np.round(np.mean(losses), 7)}"
-#             )
-#             prbar.update(1)
-#
-#         with torch.no_grad():
-#             if cg_config["conj_dir"] is None:
-#                 cg_config["conj_dir"] = -grad
-#                 cg_config["curr_grad_norm"] = grad.norm(qr_based=True)
-#             if cg_config["curr_grad_norm"] is None:
-#                 cg_config["curr_grad_norm"] = grad.norm(qr_based=True)
-#                 beta = cg_config["curr_grad_norm"] / cg_config["prev_grad_norm"]
-#                 cg_config["conj_dir"] = -grad + (beta ** 2) * vector_transport(None, T_k, cg_config["conj_dir"])
-#                 cg_config["conj_dir"] = cg_config["conj_dir"].round(grad.rank)
-#
-#             func = loss_fn(total_preds, total_targets)
-#             alpha = cg_config["alpha"] = __custom_line_search(func, T_k, cg_config["conj_dir"], rank, cg_config["alpha"])
-#             T_k += alpha * cg_config["conj_dir"]
-#             T_k = T_k.round(rank)
-#             cg_config["prev_grad_norm"] = cg_config["curr_grad_norm"]
-#             cg_config["curr_grad_norm"] = None
-#
-#     return T_k, np.mean(losses), cg_config
-
-
-# SVRG setting
-def train_one_epoch(train_dataloader, T_k, svrg_config = None):
-    rank = T_k.rank
+def train_one_epoch(train_dataloader, T_k, train_config=None):
+    rank = MANIFOLD_RANK
     losses = []
-    full_grad = None
-    if svrg_config is None:
-        svrg_config = {
-            "alpha": 10000,
-            "memory": 10
-        }
-    # idx = np.random.choice(np.arange(0, len(train_dataloader)), svrg_config["memory"], False)
-    idx = [1, 3]
     with tqdm(total=len(train_dataloader), file=sys.stdout) as prbar:
         for batch_id, (features, targets) in enumerate(train_dataloader):
-            features = features.to(DEVICE)
-            targets = targets.to(DEVICE).float()
-            func = lambda T: train_one_batch(features, targets, T)
+            func = lambda T: train_one_batch(features, targets, T, train_config["dropout_prob"])
 
-            losses.append(func(T_k).item())
-            if full_grad is None:
-                full_grad = compute_gradient_projection(func, T_k)
-            else:
-                full_grad += compute_gradient_projection(func, T_k)
-                full_grad = full_grad.round(2 * rank)
-                full_grad = Tucker(full_grad.core.detach(), [factor.detach() for factor in full_grad.factors])
+            losses.append(func(T_k))
+
+            grad = compute_gradient_projection(func, T_k)
+            # alpha_func = lambda a: func((T_k - a * grad).round(rank))
+            #             print(train_config["armijo_const"] * grad.norm(qr_based=True) * train_config["alpha"])
+            # alpha = __armijo(alpha_func, train_config["alpha"],
+            #                  train_config["armijo_const"] * grad.norm(qr_based=True) * train_config["alpha"])
+            alpha = train_config["armijo_const"]
+            T_k -= alpha * grad
+            T_k = T_k.round(rank)
 
             prbar.set_description(
-                f"Last loss:\t {np.round(losses[-1], 7)}, "
-                f"mean loss:\t {np.round(np.mean(losses), 7)}"
+                f"Last loss: {np.round(losses[-1], 7)},\t"
+                f"last alpha: {alpha},\t"
+                #                 f"norm: {np.round(grad_norm.item(), 2)},\t"
+                f"mean loss: {np.round(np.mean(losses), 7)}"
             )
             prbar.update(1)
-            if batch_id > 4:
-                break
 
-    alphas = []
-    with tqdm(total=svrg_config["memory"], file=sys.stdout) as prbar:
-        for batch_id, (features, targets) in enumerate(train_dataloader):
-            if batch_id in idx:
-                features = features.to(DEVICE)
-                targets = targets.to(DEVICE).float()
-                func = lambda T: train_one_batch(features, targets, T)
-                grad = compute_gradient_projection(func, T_k)
-                v = compute_gradient_projection(func, T_k) - \
-                    vector_transport(None, T_k, grad - full_grad)
-                alpha = __custom_line_search(func, T_k, -grad, rank, svrg_config["alpha"])
-                T_k -= alpha * v
-                T_k = T_k.round(rank)
-                alphas.append(alpha)
-                prbar.update(1)
-        svrg_config["alpha"] = np.mean(alphas)
-
-    return T_k, np.mean(losses), svrg_config
+    global batch_losses
+    batch_losses = losses
+    return T_k, np.mean(losses)
 
 
 def evaluate(test_dataloader, T_k):
-  metrics = None
-  loss_fn = nn.BCELoss()
-  losses = []
-  with tqdm(total=len(test_dataloader), file=sys.stdout) as prbar:
-      with torch.no_grad():
-          for features, targets in test_dataloader:
-              features = features.to(DEVICE)
-              targets = targets.to(DEVICE).float()
-              predictions = eval_batch(features, T_k)
-              predictions, targets = filter_predictions(predictions, targets, features[:, 2].reshape(-1, 1))
-              losses.append(loss_fn(predictions, targets).item())
-              metrics = compute_metrics(predictions.detach().cpu(), targets.detach().cpu(),
-                                                [1, 3, 10], accum=metrics)
+    metrics = None
+    loss_fn = nn.BCELoss()
+    losses = []
+    with tqdm(total=len(test_dataloader), file=sys.stdout) as prbar:
+        with torch.no_grad():
+            for features, targets in test_dataloader:
+                features = features.to(DEVICE)
+                targets = targets.to(DEVICE).float()
+                predictions = eval_batch(features, T_k)
+                predictions, targets = filter_predictions(predictions, targets, features[:, 2].reshape(-1, 1))
+                losses.append(loss_fn(predictions, targets).item())
+                metrics = compute_metrics(predictions.detach().cpu(), targets.detach().cpu(),
+                                          [1, 3, 10], accum=metrics)
 
-              prbar.set_description(
-                  f"Mean loss:\t {np.round(np.mean(losses), 4)} "
-                  f"MRR:\t {np.round(metrics['mrr'] / len(test_dataloader.dataset), 4)}"
-              )
-              prbar.update(1)
-  for key in metrics.keys():
-    metrics[key] /= len(test_dataloader.dataset)
+                prbar.set_description(
+                    f"Mean loss:\t {np.round(np.mean(losses), 4)} "
+                    f"MRR:\t {np.round(metrics['mrr'] / len(test_dataloader.dataset), 4)}"
+                )
+                prbar.update(1)
+    for key in metrics.keys():
+        metrics[key] /= len(test_dataloader.dataset)
 
-  return metrics, np.mean(losses)
+    return metrics, np.mean(losses)
 
 
-def train(train_dataloader, test_dataloader, T_0, baselines=None, losses=None, metrics=None, start_epoch=1):
-    loss = {
+def train(train_dataloader, val_dataloader, test_dataloader, T_0, baselines=None,
+          losses=None, metrics=None, start_epoch=1, train_config=None):
+    global LAST_EPOCH, EPOCHES
+    losses = {
         "train": [],
+        "val": [],
         "test": []
     } if not losses else losses
     metrics = {
@@ -276,34 +151,59 @@ def train(train_dataloader, test_dataloader, T_0, baselines=None, losses=None, m
         "hits_10": []
     } if not metrics else metrics
     T_k = deepcopy(T_0)
-    config = None
+    mul = 0.1
     for epoch in range(start_epoch, EPOCHES + start_epoch):
-        T_k, loss, config = train_one_epoch(train_dataloader, T_k, config)
-        local_metrics, mean_loss = evaluate(test_dataloader, T_k)
+        T_k, loss = train_one_epoch(train_dataloader, T_k, train_config)
+        torch.save(T_k, "save.pt")
 
+        _, mean_loss = evaluate(val_dataloader, T_k)
+        losses["val"].append(mean_loss)
+
+        train_config["alpha"] *= mul
+        if train_config["alpha"] <= 1e-3:
+            mul = 0.9
+        local_metrics, mean_loss = evaluate(test_dataloader, T_k)
+        # update_metrics(metrics, local_metrics)
+        losses["train"].append(loss)
+        losses["test"].append(mean_loss)
+
+        start_epoch += 1
+        # save_meta(T_k, losses, metrics, start_epoch)
+        # draw_plots(losses, metrics, baselines)
 
     return T_k
 
-
 if __name__ == '__main__':
-    data = Data()
+    data = Data(data_dir="data/WN18RR/")
     entity_vocab = {data.entities[i]: i for i in range(len(data.entities))}
     relation_vocab = {data.relations[i]: i for i in range(len(data.relations))}
 
-    train_dataset = KG_dataset(data.train_data, entity_vocab, relation_vocab, label_smoothing=0.1)
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE[0], shuffle=False)
+    train_dataset = KG_dataset(data.train_data, entity_vocab, relation_vocab, label_smoothing=0.15)
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE[0], shuffle=True, collate_fn=numpy_collate)
+
+    val_dataset = KG_dataset(data.valid_data, entity_vocab, relation_vocab, test_set=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=BATCH_SIZE[1], shuffle=False, collate_fn=numpy_collate)
 
     test_dataset = KG_dataset(data.test_data, entity_vocab, relation_vocab, test_set=True)
-    test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE[1], shuffle=False)
+    test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE[1], shuffle=False, collate_fn=numpy_collate)
 
-    set_backend("pytorch")
-    T_0 = Tucker(backend.randn([MANIFOLD_RANK] * 3, dtype=torch.float32, device=DEVICE),
-                 [backend.randn((len(entity_vocab), MANIFOLD_RANK), dtype=torch.float32, device=DEVICE),
-                  backend.randn((len(relation_vocab), MANIFOLD_RANK), dtype=torch.float32, device=DEVICE),
-                  backend.randn((len(entity_vocab), MANIFOLD_RANK), dtype=torch.float32, device=DEVICE)])
-    uniform_(T_0.core, -1, 1)
-    xavier_normal_(T_0.factors[0])
-    xavier_normal_(T_0.factors[1])
-    xavier_normal_(T_0.factors[2])
+    losses, metrics = None, None
+    # try:
+    #     (losses, metrics), T_0 = load_meta(f"rk_{MANIFOLD_RANK}", LAST_EPOCH)
+    # except:
+    T_0 = Tucker(glorot_uniform(dtype=jnp.float32)(random.PRNGKey(322), [MANIFOLD_RANK] * 3),
+                 [glorot_normal(dtype=jnp.float32)(random.PRNGKey(322), (len(entity_vocab), MANIFOLD_RANK)),
+                  glorot_normal(dtype=jnp.float32)(random.PRNGKey(322), (len(relation_vocab), MANIFOLD_RANK)),
+                  glorot_normal(dtype=jnp.float32)(random.PRNGKey(322), (len(entity_vocab), MANIFOLD_RANK))])
 
-    T = train(train_dataloader, test_dataloader, T_0)
+    train_config = {
+        "alpha": 100,
+        "memory": 10,
+        "dropout_prob": 0.2,
+        "armijo_const": 1e-5,
+        "grad_norm_clip": 1000,
+        "momentum_betas": [0.9, 0.99],
+        "eps": 1e-8
+    }
+
+    train(train_dataloader, val_dataloader, test_dataloader, T_0, None, losses, metrics, train_config=train_config)
