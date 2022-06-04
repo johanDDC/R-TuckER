@@ -74,6 +74,10 @@ def eval_batch(X, T_k: Tucker):
     predictions = T_k.k_mode_product(0, subject_idx).k_mode_product(1, relation_idx)
     predictions = torch.sigmoid(predictions.full())
     preds = predictions[0, 0, :].reshape(1, -1)
+    # inds = np.hstack([np.ones((predictions.shape[0] * predictions.shape[2], 2)) *
+    #                   np.tile(np.arange(predictions.shape[0]), (predictions.shape[2], 1)).T.reshape(-1, 1),
+    #                   np.tile(np.arange(predictions.shape[2]).reshape(-1, 1), (predictions.shape[0], 1))])
+    # preds = predictions[inds].reshape(-1, T_k.shape[0])
     for i in range(1, predictions.shape[0]):
         preds = torch.cat([preds, predictions[i, i, :].reshape(1, -1)], dim=0)
 
@@ -203,12 +207,14 @@ def train_one_epoch(train_dataloader, T_k, svrg_config = None):
             func = lambda T: train_one_batch(features, targets, T)
 
             losses.append(func(T_k).item())
-            if full_grad is None:
-                full_grad = compute_gradient_projection(func, T_k)
-            else:
-                full_grad += compute_gradient_projection(func, T_k)
-                full_grad = full_grad.round(2 * rank)
-                full_grad = Tucker(full_grad.core.detach(), [factor.detach() for factor in full_grad.factors])
+            # if full_grad is None:
+            full_grad = compute_gradient_projection(func, T_k)
+            T_k -= full_grad
+            T_k = T_k.round(rank)
+            # else:
+            #     full_grad += compute_gradient_projection(func, T_k)
+            #     full_grad = full_grad.round(2 * rank)
+            #     full_grad = Tucker(full_grad.core.detach(), [factor.detach() for factor in full_grad.factors])
 
             prbar.set_description(
                 f"Last loss:\t {np.round(losses[-1], 7)}, "
@@ -297,13 +303,13 @@ if __name__ == '__main__':
     test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE[1], shuffle=False)
 
     set_backend("pytorch")
-    T_0 = Tucker(backend.randn([MANIFOLD_RANK] * 3, dtype=torch.float32, device=DEVICE),
-                 [backend.randn((len(entity_vocab), MANIFOLD_RANK), dtype=torch.float32, device=DEVICE),
-                  backend.randn((len(relation_vocab), MANIFOLD_RANK), dtype=torch.float32, device=DEVICE),
-                  backend.randn((len(entity_vocab), MANIFOLD_RANK), dtype=torch.float32, device=DEVICE)])
-    uniform_(T_0.core, -1, 1)
-    xavier_normal_(T_0.factors[0])
-    xavier_normal_(T_0.factors[1])
-    xavier_normal_(T_0.factors[2])
+    T_0 = Tucker(torch.zeros([MANIFOLD_RANK] * 3, dtype=torch.float32, device=DEVICE),
+                 [torch.zeros((len(entity_vocab), MANIFOLD_RANK), dtype=torch.float32, device=DEVICE),
+                  torch.zeros((len(relation_vocab), MANIFOLD_RANK), dtype=torch.float32, device=DEVICE),
+                  torch.zeros((len(entity_vocab), MANIFOLD_RANK), dtype=torch.float32, device=DEVICE)])
+    # uniform_(T_0.core, -1, 1)
+    # xavier_normal_(T_0.factors[0])
+    # xavier_normal_(T_0.factors[1])
+    # xavier_normal_(T_0.factors[2])
 
     T = train(train_dataloader, test_dataloader, T_0)

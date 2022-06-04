@@ -186,3 +186,9 @@ def filter_predictions(predictions, targets, filter):
     targets[targets == 1] = 0
     return predictions.scatter_(1, filter, interest_prediction_vals), \
             targets.scatter_(1, filter, torch.ones(interest_prediction_vals.shape, device=targets.device))
+
+
+def reshape_fortran(x, shape):
+    if len(x.shape) > 0:
+        x = x.permute(*reversed(range(len(x.shape))))
+    return x.reshape(*reversed(shape)).permute(*reversed(range(len(shape))))

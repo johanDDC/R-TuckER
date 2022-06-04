@@ -1,7 +1,11 @@
+import sys
+
 import torch
+from torch.optim import Adam
 from torch.utils.data import DataLoader
 from torch import tensor, FloatTensor
 import numpy as np
+from tqdm import tqdm
 
 from load import Data, KG_dataset
 from model import R_TuckER
@@ -17,63 +21,62 @@ EPOCHES = 500
 LR = 1e-3# start learning rate
 MANIFOLD_RANK = 200
 
+def train_loop(model, train_dataloader, test_dataloader):
+    model.train()
+    for epoch in range(1, EPOCHES + 1):
+        model.train()
+        losses = []
+        with tqdm(total=len(train_dataloader), file=sys.stdout) as prbar:
+            for features, targets in train_dataloader:
+                features = features.to(DEVICE)
+                targets = targets.to(DEVICE).float()
+                predictions = model(features)
+                with torch.no_grad():
+                    loss = model.loss(predictions, targets)
+                    losses.append(loss.item())
+                model.optimize(features, targets)
+
+                prbar.set_description(
+                    f"Last loss: {np.round(losses[-1], 7)},\t"
+                    f"mean loss: {np.round(np.mean(losses), 7)}"
+                )
+                prbar.update(1)
+
+        losses = []
+        metrics = None
+        model.eval()
+        with tqdm(total=len(test_dataloader), file=sys.stdout) as prbar:
+            with torch.no_grad():
+                for features, targets in test_dataloader:
+                    features = features.to(DEVICE)
+                    targets = targets.to(DEVICE).float()
+                    predictions = model(features)
+                    predictions, targets = filter_predictions(predictions, targets, features[:, 2].reshape(-1, 1))
+                    losses.append(model.loss(predictions, targets).item())
+                    metrics = compute_metrics(predictions.detach().cpu(), targets.detach().cpu(),
+                                              [1, 3, 10], accum=metrics)
+                    prbar.set_description(
+                        f"Mean loss:\t {np.round(np.mean(losses), 4)} "
+                        f"MRR:\t {np.round(metrics['mrr'] / len(test_dataloader.dataset), 4)}"
+                    )
+                    prbar.update(1)
+
+
 if __name__ == '__main__':
     data = Data()
     entity_vocab = {data.entities[i]: i for i in range(len(data.entities))}
     relation_vocab = {data.relations[i]: i for i in range(len(data.relations))}
 
-    train_dataset = KG_dataset(data.train_data, entity_vocab, relation_vocab, label_smoothing=0.3)
-    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE[0], shuffle=False)
+    train_dataset = KG_dataset(data.train_data, entity_vocab, relation_vocab, label_smoothing=0.2)
+    train_dataloader = DataLoader(train_dataset, batch_size=BATCH_SIZE[0], shuffle=True)
 
     test_dataset = KG_dataset(data.test_data, entity_vocab, relation_vocab, test_set=True)
     test_dataloader = DataLoader(test_dataset, batch_size=BATCH_SIZE[1], shuffle=False)
 
     set_backend("pytorch")
-    model = R_TuckER((len(entity_vocab), len(relation_vocab)), MANIFOLD_RANK)
-    model.init(MANIFOLD_RANK)
-    # pretrained = torch.load("rk_50_epoch_1.pt")
-    # model.fine_tune(pretrained)
+    model = R_TuckER(data, [50, 50, 50], (len(entity_vocab), len(relation_vocab), len(entity_vocab)), "cpu")
+    model.init()
     model.to(DEVICE)
-    # torch.save(model, "model.pt")
-    # model = torch.load("rk_50_epoch_5.pt")
-    # model.to(DEVICE)
-    optimizer = R_TuckEROptimizer(model.parameters(), model, MANIFOLD_RANK, 1e-3)
-    # optimizer = RSVRG(model.parameters(), model, MANIFOLD_RANK, LR, len(train_dataloader), memory=2)
-    # optimizer.idx[0] = 2
-    # optimizer.idx[1] = 3
-    a = 4
-    j = 0
-    for epoch in range(1, EPOCHES + 1):
-        model.train()
-        losses = []
-        for features, targets in train_dataloader:
-            features = features.to(DEVICE)
-            targets = targets.to(DEVICE).float()
-            optimizer.zero_grad()
-            predictions, loss_fn = model(features[:, 0], features[:, 1])
-            optimizer.fit(loss_fn, targets)
-            loss = optimizer.loss(predictions, targets)
-            losses.append(loss.item())
-            # optimizer.step()
-            print("\r", np.round(np.mean(losses), 7), sep="", end="")
-            optimizer.step()
-            break
-        print("\r", np.round(np.mean(losses), 7), sep="")
-        continue
-        # optimizer.step()
 
-        model.eval()
-        total_preds = torch.Tensor().to(DEVICE)
-        total_targets = torch.Tensor().to(DEVICE)
-        with torch.no_grad():
-            for features, targets in test_dataloader:
-                features = features.to(DEVICE)
-                targets = targets.to(DEVICE).float()
-                predictions, _ = model(features[:, 0], features[:, 1])
-                predictions, targets = filter_predictions(predictions, targets, features[:, 2].reshape(-1, 1))
-                total_preds = torch.cat([total_preds, predictions])
-                total_targets = torch.cat([total_targets, targets])
-            local_metrics = compute_metrics(total_preds.detach().cpu(), total_targets.detach().cpu(),
-                                            [1, 3, 10], None)
-        torch.save(model, "model.pt")
+    train_loop(model, train_dataloader, test_dataloader)
 
