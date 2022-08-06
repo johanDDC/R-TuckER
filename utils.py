@@ -18,6 +18,7 @@ class R_TuckEROptimizer(Optimizer):
         super().__init__(params, defaults)
         self.regular_optim = Adam(model.parameters(), lr=self.adam_lr)
         self.momentum = None
+        self.direction = None
         if scheduler_constructor:
             self.scheduler = scheduler_constructor(self.regular_optim)
 
@@ -26,6 +27,8 @@ class R_TuckEROptimizer(Optimizer):
 
     def fit(self, loss_fn, targets):
         x_k = self.model.knowledge_graph
+        if self.direction:
+            self.momentum = vector_transport(None, x_k, self.direction)
         func = lambda T: loss_fn(T, targets)
         riemann_grad = compute_gradient_projection(func, x_k)
         grad_norm = riemann_grad.norm()
@@ -46,7 +49,6 @@ class R_TuckEROptimizer(Optimizer):
         x_k = self.model.knowledge_graph
         x_k += self.direction
         x_k = x_k.round(self.rank)
-        self.momentum = vector_transport(None, x_k, self.direction)
         self.model.update_graph(x_k)
         self.regular_optim.step()
 
