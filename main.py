@@ -1,11 +1,7 @@
 import sys
 
-import torch
 from torch.utils.data import DataLoader
-from torch import tensor, FloatTensor
-from time import time
 
-import numpy as np
 from tqdm import tqdm
 
 from load import Data, KG_dataset

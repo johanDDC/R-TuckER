@@ -1,11 +1,8 @@
 import torch
-from torch import nn, sparse_coo_tensor
+from torch import nn
 from torch.nn.init import xavier_normal_, xavier_uniform_
 
-import numpy as np
-
 from tucker_riemopt import Tucker
-from tucker_riemopt import backend
 
 
 class R_TuckER(torch.nn.Module):
