@@ -129,8 +129,9 @@ class Experiment:
             losses["test"].append(mean_loss)
 
             if cur_val_mrr > prev_val_mrr:
+                prev_val_mrr = cur_val_mrr
                 save_model(self.model, f"./models/rk_{self.model.rank[0]}_epoch_{epoch}",
-                           losses, metrics, epoch)
+                           self.losses, self.metrics, epoch)
             if draw:
                 draw_plots(losses, metrics, baselines)
         return self
