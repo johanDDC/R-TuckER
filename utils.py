@@ -46,6 +46,7 @@ class R_TuckEROptimizer(Optimizer):
         x_k = self.model.knowledge_graph
         x_k += self.direction
         x_k = x_k.round(self.rank)
+        self.momentum = vector_transport(None, x_k, self.direction)
         self.model.update_graph(x_k)
         self.regular_optim.step()
 
