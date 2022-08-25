@@ -1,11 +1,7 @@
 import sys
 
-import torch
 from torch.utils.data import DataLoader
-from torch import tensor, FloatTensor
-from time import time
 
-import numpy as np
 from tqdm import tqdm
 
 from load import Data, KG_dataset
@@ -113,11 +109,13 @@ class Experiment:
             "hits_3": [],
             "hits_10": []
         } if metrics is None else metrics
+        prev_val_mrr = self.evaluate(self.val_dataloader)[0]["mrr"]
         for epoch in range(start_epoch, self.epoches + start_epoch):
             loss, mean_norm = self.__train_one_epoch()
             torch.save(self.model, "snapshot.pt")
 
-            _, mean_loss = self.evaluate(self.val_dataloader)
+            val_metrics, mean_loss = self.evaluate(self.val_dataloader)
+            cur_val_mrr = val_metrics["mrr"]
             self.losses["val"].append(mean_loss)
 
             if self.optimizer.lr > 100 and len(losses["val"]) > 1 and losses["val"][-1] > losses["val"][-2]:
@@ -130,8 +128,10 @@ class Experiment:
             losses["norm"].append(mean_norm)
             losses["test"].append(mean_loss)
 
-            save_model(self.model, f"./models/rk_{self.model.rank[0]}_epoch_{epoch}",
-                       losses, metrics, epoch)
+            if cur_val_mrr > prev_val_mrr:
+                prev_val_mrr = cur_val_mrr
+                save_model(self.model, f"./models/rk_{self.model.rank[0]}_epoch_{epoch}",
+                           self.losses, self.metrics, epoch)
             if draw:
                 draw_plots(losses, metrics, baselines)
         return self
