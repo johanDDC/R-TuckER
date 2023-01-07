@@ -74,7 +74,7 @@ def evaluate(model, criterion, dataloader):
 
     for key in val_metrics.keys():
         val_metrics[key] /= denom
-    return val_metrics, val_loss / denom
+    return val_metrics, val_loss / dataloader_len
 
 
 def train(model, optimizer, train_loader, val_loader, test_loader, config: Config,
@@ -104,7 +104,7 @@ def train(model, optimizer, train_loader, val_loader, test_loader, config: Confi
             state.save(config.train_cfg.checkpoint_path, f"rk_{model.rank[1]}")
 
         if draw:
-            draw_plots(losses, metrics, baselines)
+            draw_plots(state, baselines)
 
     return state
 
@@ -140,7 +140,7 @@ if __name__ == '__main__':
     test_dataset = KG_dataset(data, data.test_data, test_set=True)
     test_dataloader = DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False, pin_memory=True)
 
-    final_state = train(model, opt, train_dataloader, val_dataloader, test_dataloader, cfg)
+    final_state = train(model, opt, train_dataloader, val_dataloader, test_dataloader, cfg, draw=True)
     print("Final loss value:", final_state.losses.test[-1], sep="\t")
     print("Final mrr value:", final_state.metrics.mrr.test[-1], sep="\t")
     print("Final hits@1 value:", final_state.metrics.hits_1.test[-1], sep="\t")

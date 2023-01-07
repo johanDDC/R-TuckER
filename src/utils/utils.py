@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 
+from src.utils.storage import StateDict
+
 
 def set_random_seed(seed):
     torch.backends.cudnn.deterministic = True
@@ -19,32 +21,37 @@ def filter_predictions(predictions, targets, filter):
            targets.scatter_(1, filter, torch.ones(interest_prediction_vals.shape, device=targets.device))
 
 
-def draw_plots(losses, metrics, baselines=None):
+def draw_plots(state: StateDict, baselines=None):
     import matplotlib.pyplot as plt
     from IPython.display import clear_output
 
     f, ax = plt.subplots(ncols=3, nrows=2, figsize=(24, 9))
     ax[0, 0].set(title="NLL loss", xlabel="Epoches", ylabel="Loss")
-    ax[0, 1].set(title="Mean grad norm on train", xlabel="Epoches", ylabel="Norm")
+    ax[0, 1].set(title="Mean riemann grad norm on train", xlabel="Epoches", ylabel="Norm")
     ax[0, 2].set(title="MRR", xlabel="Epoches", ylabel="MRR")
     ax[1, 0].set(title="Hits@1", xlabel="Epoches", ylabel="Hits@1")
     ax[1, 1].set(title="Hits@3", xlabel="Epoches", ylabel="Hits@3")
     ax[1, 2].set(title="Hits@10", xlabel="Epoches", ylabel="Hits@10")
 
-    epoch = len(metrics["mrr"])
-    x = np.arange(1, epoch + 1)
+    last_epoch = state.last_epoch
+    x = np.arange(1, last_epoch + 1)
     baselines_y = np.ones(len(x))
-    # if len(x) > 1:
-    ax[0, 0].plot(x, losses["train"], c="tab:blue", label="train")
-    ax[0, 0].plot(x, losses["val"], c="tab:green", label="val")
-    ax[0, 0].plot(x, losses["test"], c="tab:orange", label="test")
+    ax[0, 0].plot(x, state.losses.train, c="tab:blue", label="train")
+    ax[0, 0].plot(x, state.losses.val, c="tab:green", label="val")
+    ax[0, 0].plot(x, state.losses.test, c="tab:orange", label="test")
 
-    ax[0, 1].plot(x, losses["norm"], c="tab:red")
-    ax[0, 2].plot(x, metrics["mrr"], c="tab:orange", label="test")
+    ax[0, 1].plot(x, state.losses.norms, c="tab:red")
+    ax[0, 2].plot(x, state.metrics.mrr.test, c="tab:orange", label="test")
+    ax[0, 2].plot(x, state.metrics.mrr.val, c="tab:green", label="val")
 
-    ax[1, 0].plot(x, metrics["hits_1"], c="tab:orange")
-    ax[1, 1].plot(x, metrics["hits_3"], c="tab:orange")
-    ax[1, 2].plot(x, metrics["hits_10"], c="tab:orange")
+    ax[1, 0].plot(x, state.metrics.hits_1.test, c="tab:orange", label="test")
+    ax[1, 0].plot(x, state.metrics.hits_1.val, c="tab:green", label="val")
+
+    ax[1, 1].plot(x, state.metrics.hits_3.test, c="tab:orange", label="test")
+    ax[1, 1].plot(x, state.metrics.hits_3.val, c="tab:green", label="val")
+
+    ax[1, 2].plot(x, state.metrics.hits_10.test, c="tab:orange", label="test")
+    ax[1, 2].plot(x, state.metrics.hits_10.val, c="tab:green", label="val")
 
     if baselines:
         ax[0, 2].plot(x, baselines["mrr"] * baselines_y, color="red", ls="--", lw=1.5, label="baseline")

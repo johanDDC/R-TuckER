@@ -1,19 +1,18 @@
 import torch
-import numpy as np
 
 
-def metrics(prediction, target):
-    zero = torch.tensor([0], device=prediction.device)
-    one = torch.tensor([1], device=prediction.device)
-    target_col = torch.where(target == 1)[1].view(-1, 1)
+def metrics(predictions, targets):
+    _, idx = torch.sort(predictions, dim=1, descending=True)
+    targets_sorted = targets.gather(1, idx)
 
-    indices = prediction.argsort()
-    mrr = (1.0 / (indices == target_col).nonzero()[:, 1].float().add(1.0)).sum().item()
+    ranks = targets_sorted.argmax(dim=1) + 1
+    mrr = torch.sum(1 / ranks).item()
 
     hits = []
     for k in [1, 3, 10]:
-        hits.append(prediction.topk(k=k, largest=False)[1])
-        hits[-1] = torch.where(hits[-1] == target_col, one, zero).float().sum().item()
+        hits_k = targets_sorted[:, :k].sum(dim=1).float()
+        hits_k[hits_k > 1] = 1
+        hits.append(hits_k.sum().item())
 
     return {
         "mrr" : mrr,
