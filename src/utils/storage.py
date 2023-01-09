@@ -72,8 +72,8 @@ class StateDict:
         }, os.path.join(dir, filename))
 
     @classmethod
-    def load(cls, name):
-        state_dict = torch.load(f"{name}.pth")
+    def load(cls, name, **kwargs):
+        state_dict = torch.load(f"{name}.pth", **kwargs)
         return cls(**state_dict)
 
 
