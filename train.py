@@ -16,8 +16,7 @@ from src.utils.utils import set_random_seed, filter_predictions, draw_plots
 from src.utils.metrics import metrics
 from configs.base_config import Config
 
-# DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DEVICE = "cpu"
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def train_one_epoch(model, optimizer, criterion, train_loader):
@@ -26,7 +25,7 @@ def train_one_epoch(model, optimizer, criterion, train_loader):
     train_loss = 0
     train_grad_norm = 0
     with tqdm(total=dataloader_len) as prbar:
-        for idx, (features, targets) in enumerate(train_loader):
+        for batch_id, (features, targets) in enumerate(train_loader):
             features, targets = features.to(DEVICE, non_blocking=True), targets.to(DEVICE, non_blocking=True)
 
             predictions, score_fn = model(features[:, 0], features[:, 1])
@@ -41,7 +40,7 @@ def train_one_epoch(model, optimizer, criterion, train_loader):
             train_loss += loss.item()
 
             optimizer.zero_grad()
-            prbar.set_description(f"{loss.item()}")
+            prbar.set_description(f"{train_loss / (batch_id + 1)}")
             prbar.update(1)
 
     return train_loss / dataloader_len, train_grad_norm / dataloader_len
