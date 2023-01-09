@@ -1,21 +1,22 @@
 import torch
-from torch.optim import Optimizer, Adam
 
+from torch.optim import Optimizer
 from tucker_riemopt import Tucker
 from tucker_riemopt.riemopt import compute_gradient_projection, vector_transport
 
 
 class SGDmomentum(Optimizer):
-    def __init__(self, params, rank, lr, momentum_beta=0.9, armijo_slope=1e-4, armijo_increase=0.5,
+    def __init__(self, params, rank, max_lr, momentum_beta=0.9, armijo_slope=1e-4, armijo_increase=0.5,
                  armojo_decrease=0.5, armijo_iters = 20):
         self.rank = rank
-        self.lr = lr
+        self.max_lr = max_lr
+        self.lr = max_lr
         self.momentum_beta = momentum_beta
         self.armijo_slope = armijo_slope
         self.armijo_increase = armijo_increase
         self.armijo_decrease = armojo_decrease
         self.armijo_iters = armijo_iters
-        defaults = dict(rank=rank, lr=self.lr, momentum_beta=self.momentum_beta,
+        defaults = dict(rank=rank, max_lr=self.max_lr, lr=self.lr, momentum_beta=self.momentum_beta,
                         armijo_slope=self.armijo_slope, armijo_increase=self.armijo_increase,
                         armojo_decrease=self.armijo_decrease)
         super().__init__(params, defaults)
@@ -42,7 +43,7 @@ class SGDmomentum(Optimizer):
         best = (alpha, last_phi)
         satisfied = phi_0 - last_phi >= alpha * self.armijo_slope
 
-        while not satisfied:
+        while not satisfied and alpha < self.max_lr:
             alpha /= self.armijo_increase
             phi_alpha = func(x_k + alpha * direction)
             if phi_alpha > last_phi:
@@ -65,7 +66,7 @@ class SGDmomentum(Optimizer):
             last_phi = phi_alpha
             satisfied = phi_0 - last_phi >= alpha * self.armijo_slope
 
-        return best[0]
+        return min(best[0], self.max_lr)
 
     @torch.no_grad()
     def step(self, closure=None):
