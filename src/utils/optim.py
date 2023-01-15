@@ -7,19 +7,22 @@ from tucker_riemopt.riemopt import compute_gradient_projection, vector_transport
 
 class SGDmomentum(Optimizer):
     def __init__(self, params, rank, max_lr, momentum_beta=0.9, armijo_slope=1e-4, armijo_increase=0.5,
-                 armojo_decrease=0.5, armijo_iters = 20):
+                 armijo_decrease=0.5, armijo_iters=20):
         self.rank = rank
         self.max_lr = max_lr
         self.lr = max_lr
         self.momentum_beta = momentum_beta
+
         self.armijo_slope = armijo_slope
         self.armijo_increase = armijo_increase
-        self.armijo_decrease = armojo_decrease
+        self.armijo_decrease = armijo_decrease
         self.armijo_iters = armijo_iters
+
         defaults = dict(rank=rank, max_lr=self.max_lr, lr=self.lr, momentum_beta=self.momentum_beta,
                         armijo_slope=self.armijo_slope, armijo_increase=self.armijo_increase,
                         armojo_decrease=self.armijo_decrease)
         super().__init__(params, defaults)
+
         self.momentum = None
         self.direction = None
 
@@ -30,11 +33,10 @@ class SGDmomentum(Optimizer):
         grad_norm = riemann_grad.norm()
         riemann_grad = 1 / grad_norm * riemann_grad
         if self.momentum:
-            # self.direction = -self.lr * riemann_grad + self.momentum_beta * self.momentum
             self.direction = self.momentum_beta * self.momentum + (1 - self.momentum_beta) * riemann_grad
         else:
             self.direction = riemann_grad
-        return  grad_norm
+        return grad_norm
 
     def __armijo(self, func, x_k, direction):
         alpha = self.lr
@@ -88,6 +90,3 @@ class SGDmomentum(Optimizer):
         R.data.add_(x_k.factors[0] - R)
         S.data.add_(x_k.factors[1] - S)
         O.data.add_(x_k.factors[2] - O)
-
-    def scheduler_step(self):
-        self.scheduler.step()

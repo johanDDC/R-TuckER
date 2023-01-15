@@ -8,7 +8,6 @@ from src.data.Dataset import KG_dataset
 from src.utils.optim import SGDmomentum
 from src.utils.storage import Losses, Metrics, StateDict
 from tucker_riemopt import set_backend, Tucker
-# from tucker_riemopt.riemopt import compute_gradient_projection
 
 from src.data.Data import Data
 from src.model.R_TuckER import R_TuckER

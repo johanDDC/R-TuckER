@@ -18,10 +18,6 @@ class Losses:
         self.val.append(val_loss)
         self.norms.append(train_norm)
 
-    # def __repr__(self):
-    #     return repr(
-    #         f"Last losses: train {self.train[-1]}, test {self.test[-1]}, val {self.val[-1]}, norm {self.norms[-1]}")
-
 
 @dataclass()
 class Metric:
@@ -30,9 +26,6 @@ class Metric:
 
     def __getitem__(self, item):
         return getattr(self, item)
-
-    # def __repr__(self):
-    #     return repr(f"test {self.test[-1]}, val {self.val[-1]}")
 
 
 @dataclass()
@@ -47,11 +40,6 @@ class Metrics:
         self.hits_1[type].append(metrics_dict["hits@1"])
         self.hits_3[type].append(metrics_dict["hits@3"])
         self.hits_10[type].append(metrics_dict["hits@10"])
-
-    # def __repr__(self):
-    #     return repr(f"Last metrics: mrr {repr(self.mrr)}; "
-    #                 f"hits@1 {repr(self.hits_1)}; hits@3 {repr(self.hits_3)}; "
-    #                 f"hits@10 {repr(self.hits_10)}")
 
 
 @dataclass()
@@ -75,7 +63,3 @@ class StateDict:
     def load(cls, name, **kwargs):
         state_dict = torch.load(f"{name}.pth", **kwargs)
         return cls(**state_dict)
-
-
-    # def __repr__(self):
-    #     return repr(f"State dict of model {repr(self.model)}")
