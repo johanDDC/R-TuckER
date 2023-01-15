@@ -83,7 +83,7 @@ def train(model, optimizer, train_loader, val_loader, test_loader, config: Confi
     num_epoches = config.train_cfg.num_epoches
     start_epoch = 1 if not config.state_dict else config.state_dict.last_epoch
 
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = nn.BCELoss()
     prev_val_mrr = evaluate(model, criterion, val_loader)[0]["mrr"]
     for epoch in range(start_epoch, num_epoches + start_epoch):
         train_loss, train_norm = train_one_epoch(model, optimizer, criterion, train_loader)

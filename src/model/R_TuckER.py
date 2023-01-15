@@ -56,12 +56,12 @@ class R_TuckER(nn.Module):
             preds = torch.einsum("abc,da->dbc", T.core, relations)
             preds = torch.bmm(subjects.view(-1, 1, subjects.shape[1]), preds).view(-1, subjects.shape[1])
             preds = preds @ T.factors[2].T
-            return preds
+            return torch.sigmoid(preds)
 
         preds = torch.einsum("abc,da->dbc", self.core, relations)
         preds = torch.bmm(subjects.view(-1, 1, subjects.shape[1]), preds).view(-1, subjects.shape[1])
         preds = preds @ self.O.weight.T
-        return preds, forward_core
+        return torch.sigmoid(preds), forward_core
 
     def score(self, T):
         (subject_idx, relation_idx) = self.save
