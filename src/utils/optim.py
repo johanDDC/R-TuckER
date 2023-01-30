@@ -90,3 +90,24 @@ class SGDmomentum(Optimizer):
         R.data.add_(x_k.factors[0] - R)
         S.data.add_(x_k.factors[1] - S)
         O.data.add_(x_k.factors[2] - O)
+
+
+def add_and_retract(x: Tucker, grad: Tucker):
+    rank = x.rank
+    Qs = [None] * x.ndim
+    Rs = [None] * x.ndim
+    for i in range(x.ndim):
+        Qs[i], Rs[i] = torch.linalg.qr(grad.factors[i])
+
+    def f(alpha):
+        temp_core = torch.zeros_like(grad.core, device=grad.device)
+        temp_core[:rank[0], :rank[1], :rank[2]] = x.core
+        sum_core = temp_core + alpha * grad.core
+        inner_tensor = Tucker(sum_core, Rs)
+        inner_tensor = Tucker.full2tuck(inner_tensor, eps=1e-8)
+        for i in range(x.ndim):
+            Qs[i] = Qs[i] @ inner_tensor.factors[i]
+            Qs[i] = Qs[i][:, :rank[i]]
+        return Tucker(inner_tensor.core[:rank[0], :rank[1], :rank[2]], Qs)
+
+    return f
