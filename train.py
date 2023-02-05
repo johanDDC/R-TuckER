@@ -5,12 +5,12 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.data.Dataset import KG_dataset
-from src.utils.optim import SGDmomentum
+from src.model.asymmetric.optim import SGDmomentum
 from src.utils.storage import Losses, Metrics, StateDict
 from tucker_riemopt import set_backend, Tucker
 
 from src.data.Data import Data
-from src.model.R_TuckER import R_TuckER
+from src.model.asymmetric.R_TuckER import R_TuckER
 from src.utils.utils import set_random_seed, filter_predictions, draw_plots
 from src.utils.metrics import metrics
 from configs.base_config import Config
