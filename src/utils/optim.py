@@ -31,44 +31,32 @@ class SGDmomentum(Optimizer):
             self.momentum = vector_transport(None, x_k, self.direction)
         riemann_grad = compute_gradient_projection(loss_fn, x_k)
         grad_norm = riemann_grad.norm()
-        riemann_grad = 1 / grad_norm * riemann_grad
+        # riemann_grad = 1 / grad_norm * riemann_grad
         if self.momentum:
             self.direction = self.momentum_beta * self.momentum + (1 - self.momentum_beta) * riemann_grad
         else:
             self.direction = riemann_grad
         return grad_norm
 
-    def __armijo(self, func, x_k, direction):
-        alpha = self.lr
+    def __armijo(self, func, x_k: Tucker, direction: Tucker):
+        alpha = 2 * self.lr
         phi_0 = func(x_k)
-        last_phi = func(x_k + alpha * direction)
-        best = (alpha, last_phi)
-        satisfied = phi_0 - last_phi >= alpha * self.armijo_slope
+        grad_norm = direction.norm(qr_based=False) # set qr_based=True
+        iter_num = 0
 
-        while not satisfied and alpha < self.max_lr:
-            alpha /= self.armijo_increase
-            phi_alpha = func(x_k + alpha * direction)
-            if phi_alpha > last_phi:
-                alpha *= self.armijo_increase
-                satisfied = phi_0 - last_phi >= alpha * self.armijo_slope
-                break
-            if phi_alpha < best[1]:
-                best = (alpha, phi_alpha)
-            last_phi = phi_alpha
-            satisfied = phi_0 - last_phi >= alpha * self.armijo_slope
+        retract_alpha = add_and_retract(x_k, direction)
+        new_point = retract_alpha(alpha)
+        last_phi = func(new_point)
+        satisfied = phi_0 - last_phi >= alpha * self.armijo_slope * grad_norm
 
-        while not satisfied:
+        while not satisfied and iter_num < self.armijo_iters:
             alpha *= self.armijo_decrease
-            phi_alpha = func(x_k + alpha * direction)
-            if phi_alpha > last_phi:
-                alpha /= self.armijo_decrease
-                break
-            if phi_alpha < best[1]:
-                best = (alpha, phi_alpha)
-            last_phi = phi_alpha
-            satisfied = phi_0 - last_phi >= alpha * self.armijo_slope
+            new_point = retract_alpha(alpha)
+            last_phi = func(new_point)
+            iter_num += 1
+            satisfied = phi_0 - last_phi >= alpha * self.armijo_slope * grad_norm
 
-        return min(best[0], self.max_lr)
+        return alpha, new_point
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -82,9 +70,8 @@ class SGDmomentum(Optimizer):
         W, S, R, O = self.param_groups[0]["params"]
         x_k = Tucker(W, [R, S, O])
 
-        self.lr = self.__armijo(closure, x_k, -self.direction)
-        x_k -= self.lr * self.direction
-        x_k = x_k.round(self.rank)
+        # self.lr, x_k = self.__armijo(closure, x_k, -self.direction)
+        x_k = add_and_retract(x_k, -self.direction)(self.lr)
 
         W.data.add_(x_k.core - W)
         R.data.add_(x_k.factors[0] - R)
@@ -100,14 +87,15 @@ def add_and_retract(x: Tucker, grad: Tucker):
         Qs[i], Rs[i] = torch.linalg.qr(grad.factors[i])
 
     def f(alpha):
-        temp_core = torch.zeros_like(grad.core, device=grad.device)
+        temp_core = torch.zeros_like(grad.core, device=grad.core.device)
         temp_core[:rank[0], :rank[1], :rank[2]] = x.core
         sum_core = temp_core + alpha * grad.core
         inner_tensor = Tucker(sum_core, Rs)
-        inner_tensor = Tucker.full2tuck(inner_tensor, eps=1e-8)
+        inner_tensor = Tucker.full2tuck(inner_tensor.full(), eps=1e-8)
+        factors = [None] * x.ndim
         for i in range(x.ndim):
-            Qs[i] = Qs[i] @ inner_tensor.factors[i]
-            Qs[i] = Qs[i][:, :rank[i]]
-        return Tucker(inner_tensor.core[:rank[0], :rank[1], :rank[2]], Qs)
+            factors[i] = Qs[i] @ inner_tensor.factors[i]
+            factors[i] = factors[i][:, :rank[i]]
+        return Tucker(inner_tensor.core[:rank[0], :rank[1], :rank[2]], factors)
 
     return f
