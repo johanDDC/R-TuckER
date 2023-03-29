@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch.nn.init import xavier_normal_, xavier_uniform_
 
+from src.utils.layers import DropoutLayer
 from tucker_riemopt import Tucker
 
 
@@ -22,6 +23,10 @@ class R_TuckER(nn.Module):
         self.O = nn.Embedding(data_count[0], rank[2])
         self.core = nn.Parameter(torch.zeros(tuple(rank), dtype=torch.float32))
 
+        self.input_dropout = DropoutLayer(0.3)
+        self.r_dropout = DropoutLayer(0.4, mode_2d=False)
+        self.e_dropout = DropoutLayer(0.5)
+
         self.rank = rank
         self.device = "cpu"
 
@@ -40,16 +45,22 @@ class R_TuckER(nn.Module):
     def forward(self, subject_idx, relation_idx):
         relations = self.R(relation_idx)
         subjects = self.S(subject_idx)
+        subjects = self.input_dropout(subjects)
 
         def forward_core(T: Tucker):
             relations = T.factors[0][relation_idx, :]
             subjects = T.factors[1][subject_idx, :]
+            subjects = self.input_dropout(subjects, forward_pass=False)
             preds = torch.einsum("abc,da->dbc", T.core, relations)
+            preds = self.r_dropout(preds, forward_pass=False)
             preds = torch.bmm(subjects.view(-1, 1, subjects.shape[1]), preds).view(-1, subjects.shape[1])
+            preds = self.e_dropout(preds, forward_pass=False)
             preds = preds @ T.factors[2].T
             return torch.sigmoid(preds)
 
         preds = torch.einsum("abc,da->dbc", self.core, relations)
+        preds = self.r_dropout(preds)
         preds = torch.bmm(subjects.view(-1, 1, subjects.shape[1]), preds).view(-1, subjects.shape[1])
+        preds = self.e_dropout(preds)
         preds = preds @ self.O.weight.T
         return torch.sigmoid(preds), forward_core
