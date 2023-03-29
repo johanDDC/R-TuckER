@@ -6,16 +6,19 @@ from tqdm import tqdm
 
 from src.data.Dataset import KG_dataset
 from src.model.asymmetric.optim import SGDmomentum
+# from src.model.symmetric.optim import SGDmomentum
 from src.utils.storage import Losses, Metrics, StateDict
 from tucker_riemopt import set_backend, Tucker
 
 from src.data.Data import Data
 from src.model.asymmetric.R_TuckER import R_TuckER
+# from src.model.symmetric.R_TuckER import R_TuckER
 from src.utils.utils import set_random_seed, filter_predictions, draw_plots
 from src.utils.metrics import metrics
 from configs.base_config import Config
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+# DEVICE = "cpu" if torch.cuda.is_available() else "cpu"
 
 
 def train_one_epoch(model, optimizer, criterion, train_loader):
@@ -32,6 +35,7 @@ def train_one_epoch(model, optimizer, criterion, train_loader):
             loss = criterion(predictions, targets)
 
             x_k = Tucker(model.core.data, [model.R.weight, model.S.weight, model.O.weight])
+            # x_k = Tucker(model.core.data, [model.R.weight, model.E.weight, model.E.weight])
 
             grad_norm = optimizer.fit(loss_fn, x_k)
             optimizer.step(loss_fn)
@@ -116,7 +120,8 @@ if __name__ == '__main__':
     train_batch_size = cfg.train_cfg.train_batch_size
     test_batch_size = cfg.train_cfg.eval_batch_size
 
-    model = R_TuckER((len(data.entities), len(data.relations)), cfg.model_cfg.manifold_rank)
+    model = R_TuckER((len(data.entities), len(data.relations)), cfg.model_cfg.manifold_rank,
+                     batch_size=64, device=DEVICE)
     model_state_dict = None
     if cfg.model_cfg.use_pretrained:
         cfg.state_dict = StateDict.load(cfg.model_cfg.pretrained_path)
@@ -128,9 +133,13 @@ if __name__ == '__main__':
                       cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate,
                       cfg.train_cfg.momentum_beta, cfg.train_cfg.armijo_slope,
                       cfg.train_cfg.armijo_increase, cfg.train_cfg.armijo_decrease)
+    # opt = SGDmomentum(nn.ParameterList([model.core, model.E.weight, model.R.weight]),
+    #                   cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate,
+    #                   cfg.train_cfg.momentum_beta, cfg.train_cfg.armijo_slope,
+    #                   cfg.train_cfg.armijo_increase, cfg.train_cfg.armijo_decrease)
 
     train_dataset = KG_dataset(data, data.train_data, label_smoothing=cfg.train_cfg.label_smoothig)
-    train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, pin_memory=True)
+    train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, pin_memory=True, drop_last=True)
 
     val_dataset = KG_dataset(data, data.valid_data, test_set=True)
     val_dataloader = DataLoader(val_dataset, batch_size=test_batch_size, shuffle=False, pin_memory=True)
