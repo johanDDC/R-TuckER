@@ -10,7 +10,7 @@ class TrainConfig:
     eval_batch_size = 64
 
     num_epoches = 200
-    learning_rate = 100
+    learning_rate = 800
     momentum_beta = 0.9
     label_smoothig = 0.1
 

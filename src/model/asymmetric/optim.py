@@ -31,7 +31,7 @@ class SGDmomentum(Optimizer):
             self.momentum = vector_transport(None, x_k, self.direction)
         riemann_grad = compute_gradient_projection(loss_fn, x_k)
         grad_norm = riemann_grad.norm()
-        # riemann_grad = 1 / grad_norm * riemann_grad
+        riemann_grad = 1 / grad_norm * riemann_grad
         if self.momentum:
             self.direction = self.momentum_beta * self.momentum + (1 - self.momentum_beta) * riemann_grad
         else:
