@@ -10,7 +10,7 @@ class TrainConfig:
     eval_batch_size = 64
 
     num_epoches = 200
-    learning_rate = 800
+    learning_rate = 10_000
     momentum_beta = 0.9
     label_smoothig = 0.1
 
@@ -20,6 +20,16 @@ class TrainConfig:
 
     checkpoint_path = "checkpoints/"
 
+    def to_dict(self):
+        return {
+            "train_batch_size": self.train_batch_size,
+            "eval_batch_size": self.eval_batch_size,
+            "num_epoches": self.num_epoches,
+            "learning_rate": self.learning_rate,
+            "momentum_beta": self.momentum_beta,
+            "label_smoothig": self.label_smoothig,
+        }
+
 
 @dataclass
 class ModelConfig:
@@ -27,6 +37,13 @@ class ModelConfig:
 
     use_pretrained = False
     pretrained_path = ""
+
+    def to_dict(self):
+        return {
+            "manifold_rank": self.manifold_rank,
+            "use_pretrained": self.use_pretrained,
+            "pretrained_path": self.pretrained_path
+        }
 
 
 @dataclass

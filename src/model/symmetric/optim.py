@@ -2,8 +2,9 @@ import torch
 import numpy as np
 
 from torch.optim import Optimizer
-from tucker_riemopt import Tucker, backend as back
-from tucker_riemopt.riemopt import compute_gradient_projection, vector_transport
+from tucker_riemopt import backend as back
+from tucker_riemopt.symmetric.tucker import Tucker
+from tucker_riemopt.symmetric.riemopt import compute_gradient_projection, vector_transport
 
 
 class SGDmomentum(Optimizer):
@@ -26,6 +27,7 @@ class SGDmomentum(Optimizer):
 
         self.momentum = None
         self.direction = None
+        self.loss = None
 
     def fit(self, loss_fn, x_k):
         # if self.direction:
@@ -37,37 +39,45 @@ class SGDmomentum(Optimizer):
         #     self.direction = self.momentum_beta * self.momentum + (1 - self.momentum_beta) * riemann_grad
         # else:
         self.direction = riemann_grad
+        self.loss = loss_fn(x_k)
         return grad_norm
 
     @torch.no_grad()
-    def __R_step(self, x_k):
-        eps = 1e-8
-        factor, intermediate_factor = torch.linalg.qr(x_k.factors[0])
-        intermediate_tensor = back.einsum("ijk,ai->ajk", x_k.core, intermediate_factor)
-        unfolding = back.reshape(intermediate_tensor, (intermediate_tensor.shape[0], -1), order="F")
-        u, s, _ = back.svd(unfolding, full_matrices=False)
-        eps_svd = eps / np.sqrt(3) * back.sqrt(s @ s)
-        cumsum = back.cumsum(back.flip(s))
-        cumsum = back.flip(~(cumsum <= eps_svd))
-        u = u[:, cumsum]
-        core = back.einsum("ijk,ia->ajk", intermediate_tensor, u)
-        factor @= u
-        factor = factor[:, :self.rank[0]]
-        return core[:self.rank[0], :, :], factor
+    def __R_step(self, x_k: Tucker):
+        Q_e, R_e = torch.linalg.qr(x_k.symmetric_factor)
+        Q_r, R_r = torch.linalg.qr(x_k.common_factors[0])
+        core_wav = torch.einsum("ijk,ai,bj,ck->abc", x_k.core, R_r, R_e, R_e)
+        unfolding = torch.flatten(core_wav, 1)
+        u, _, _ = torch.linalg.svd(unfolding, full_matrices=False)
+        u = u[:, :self.rank[0]]
+        core_wavwav = torch.einsum("ijk,ai->ajk", core_wav, u.T)
+        return Tucker(core_wavwav, [Q_r @ u], x_k.symmetric_modes, Q_e)
 
     def __E_step(self, x_k: Tucker, num_iters=1):
-        new_factor = torch.randn((x_k.factors[1].shape[0], self.rank[1]), device=x_k.factors[1].device)
+        new_factor = torch.randn((x_k.symmetric_factor.shape[0], self.rank[1]), device=x_k.symmetric_factor.device)
         new_factor = torch.linalg.qr(new_factor)[0]
+        cost_fn = lambda U: x_k.symmetric_modes_product(U.T).norm()
         new_factor.requires_grad_(True)
-        cost_fn = lambda U: x_k.k_mode_product(1, U.T).k_mode_product(2, U.T).norm()
+        # Cayley SGD
+        lr, mom_coef, eps, q, s = 0.2, 0.9, 1e-8,0.5, 2
         for iter in range(num_iters):
-            new_factor.requires_grad_(True)
             cost = cost_fn(new_factor)
             cost.backward()
-            grad = new_factor.grad
-            with torch.no_grad():
-                new_factor = new_factor + grad
-                new_factor = torch.linalg.qr(new_factor)[0]
+            eucl_grad = new_factor.grad
+            M = mom_coef * M + eucl_grad if iter > 0 else eucl_grad
+            # M = eucl_grad
+            temp = M - 0.5 * new_factor @ (new_factor.T @ M)
+            W = lambda X: temp @ (X.T @ X) - X @ (temp.T @ X)
+            # W = lambda X: temp - X @ (temp.T @ X)
+            M = W(new_factor)
+            # no lr adjustment
+            alpha = min(lr, 2 * q / (2 * torch.linalg.norm(eucl_grad, ord="fro") + eps))
+            Y = new_factor + alpha * M
+            for i in range(s):
+                Y = new_factor + alpha / 2 * W(new_factor + Y)
+            new_factor = Y.detach()
+            new_factor.requires_grad_(True)
+        # new_factor = torch.linalg.qr(new_factor)[0]
         return new_factor
 
 
@@ -80,19 +90,24 @@ class SGDmomentum(Optimizer):
             A closure that reevaluates the model and returns the loss.
         """
         W, E, R = self.param_groups[0]["params"]
-        x_k = Tucker(W, [R, E, E])
+        x_k = Tucker(W, [R], symmetric_modes=[1, 2], symmetric_factor=E)
 
         # self.lr, x_k = self.__armijo(closure, x_k, -self.direction)
-        x_k = add(x_k, self.direction, self.lr)
-        new_core, new_R = self.__R_step(x_k)
-        x_k = Tucker(new_core.detach(), [torch.eye(self.rank[0], device=new_R.device).detach(), x_k.factors[1].detach(), x_k.factors[2].detach()])
-        new_E = self.__E_step(x_k, num_iters=100)
-        x_k = Tucker(x_k.k_mode_product(1, new_E.T).k_mode_product(2, new_E.T).full().detach(),
-                     [new_R.detach(), new_E.detach(), new_E.detach()])
+        x_k = x_k - self.lr * self.direction
+        # x_k = add(x_k, -self.direction, self.lr)
+        x_k = self.__R_step(x_k)
+        new_R = x_k.common_factors[0]
+        x_k = Tucker(x_k.core, [(new_R.T @ new_R)], x_k.symmetric_modes, x_k.symmetric_factor)
+        new_E = self.__E_step(x_k, num_iters=30).detach()
+        core = x_k.symmetric_modes_product(new_E.T).full()
+        Q_E, R_E = torch.linalg.qr(new_E)
+        # print(Q_E.shape, R_E.shape)
+        core = back.einsum("ijk,aj,bk->iab", core, R_E, R_E)
+        new_E = Q_E
 
-        W.data.add_(x_k.core - W)
-        R.data.add_(x_k.factors[0] - R)
-        E.data.add_(x_k.factors[1] - E)
+        W.data.add_(core - W)
+        R.data.add_(new_R - R)
+        E.data.add_(new_E - E)
 
 
 def add(x: Tucker, grad: Tucker, alpha):
@@ -100,5 +115,5 @@ def add(x: Tucker, grad: Tucker, alpha):
     temp_core = torch.zeros_like(grad.core, device=grad.core.device)
     temp_core[:rank[0], :rank[1], :rank[2]] = x.core
     sum_core = temp_core + alpha * grad.core
-    return Tucker(sum_core, grad.factors)
+    return Tucker(sum_core, grad.common_factors, grad.symmetric_modes, grad.symmetric_factor)
 

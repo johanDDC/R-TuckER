@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from torch.nn.init import xavier_normal_, xavier_uniform_
 
-from tucker_riemopt import Tucker
+from tucker_riemopt.symmetric.tucker import Tucker
 
 
 class R_TuckER(nn.Module):
@@ -40,18 +40,12 @@ class R_TuckER(nn.Module):
                 self.R.weight.data = torch.linalg.qr(self.R.weight)[0]
 
     def forward(self, subject_idx, relation_idx):
-        relations = self.R(relation_idx)
-        subjects = self.E(subject_idx)
-
-        def forward_core(T: Tucker):
-            relations = T.factors[0][relation_idx, :]
-            subjects = T.factors[1][subject_idx, :]
+        def score_fn(T: Tucker):
+            relations = T.common_factors[0][relation_idx, :]
+            subjects = T.symmetric_factor[subject_idx, :]
             preds = torch.einsum("abc,da->dbc", T.core, relations)
             preds = torch.bmm(subjects.view(-1, 1, subjects.shape[1]), preds).view(-1, subjects.shape[1])
-            preds = preds @ T.factors[2].T
+            preds = preds @ T.symmetric_factor.T
             return torch.sigmoid(preds)
 
-        preds = torch.einsum("abc,da->dbc", self.core, relations)
-        preds = torch.bmm(subjects.view(-1, 1, subjects.shape[1]), preds).view(-1, subjects.shape[1])
-        preds = preds @ self.E.weight.T
-        return torch.sigmoid(preds), forward_core
+        return score_fn
