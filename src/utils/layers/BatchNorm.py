@@ -17,12 +17,12 @@ class _RiemannBatchNorm1d(torch.autograd.Function):
         _RiemannBatchNorm1d.eps = eps
         _RiemannBatchNorm1d.rank = rank
         _RiemannBatchNorm1d.correction_mask = torch.hstack([
-            torch.full((1, rank), eps),
-            torch.ones((1, rank))
+            torch.full((rank,), eps),
+            torch.ones((rank,))
         ])
         _RiemannBatchNorm1d.grad_correction_mask = torch.hstack([
-            torch.ones((1, rank)),
-            torch.zeros((1, rank))
+            torch.ones((rank,)),
+            torch.zeros((rank,))
         ])
 
     @staticmethod
@@ -30,15 +30,19 @@ class _RiemannBatchNorm1d(torch.autograd.Function):
         mean = input.mean(dim=0)
         input_mean = input - mean
         var = (input_mean ** 2).mean(dim=0)
+        if _RiemannBatchNorm1d.correction_mask.device != input.device:
+            _RiemannBatchNorm1d.correction_mask = _RiemannBatchNorm1d.correction_mask.to(input.device)
         std = torch.sqrt(var + _RiemannBatchNorm1d.correction_mask)
         input_hat = input_mean / std
         ctx.save_for_backward(input_hat, std, weight)
         return weight * input_hat + bias, mean, std
 
     @staticmethod
-    def backward(ctx: Any, grad_output: torch.Tensor):
+    def backward(ctx: Any, grad_output: torch.Tensor, mean, std):
         input_hat, std, weight = ctx.saved_tensors
         B, D = grad_output.shape
+        if _RiemannBatchNorm1d.grad_correction_mask.device != input_hat.device:
+            _RiemannBatchNorm1d.grad_correction_mask = _RiemannBatchNorm1d.grad_correction_mask.to(input_hat.device)
 
         grad_bias = grad_output.sum(dim=0) * _RiemannBatchNorm1d.grad_correction_mask
         grad_weight = (grad_output * input_hat).sum(dim=0)
@@ -63,11 +67,15 @@ class RiemannBatchNorm1d(_BatchNorm):
         self.__bn = _RiemannBatchNorm1d.apply
 
     def forward(self, x):
+        if self.running_mean.device != x.device:
+            self.running_mean = self.running_mean.to(x.device)
+        if self.running_std.device != x.device:
+            self.running_std = self.running_std.to(x.device)
         if self.training:
-            result, mean, std = self.__bn(x, self.weight, self.bias, self.eps)
+            result, mean, std = self.__bn(x, self.weight, self.bias)
             self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean.detach()
             self.running_std = (1 - self.momentum) * self.running_std + self.momentum * std.detach()
         else:
-            result = (x - self.running_mean) / self.running_std
-            result = self.weight * result + self.bias
+            result = (x - self.running_mean[:self.num_features]) / self.running_std[:self.num_features ]
+            result = self.weight[:self.num_features] * result + self.bias[:self.num_features]
         return result
