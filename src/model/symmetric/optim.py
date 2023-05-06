@@ -41,23 +41,6 @@ class SGDmomentum(Optimizer):
         return grad_norm
 
     @torch.no_grad()
-    def retraction(self, T: SymTucker):
-        Q_e, R_e = torch.linalg.qr(T.symmetric_factor)
-        Q_r, R_r = torch.linalg.qr(T.common_factors[0])
-        core_wav = torch.einsum("ijk,ai,bj,ck->abc", T.core, R_r, R_e, R_e)
-        unfolding = torch.flatten(core_wav, 1)
-        u, _, _ = torch.linalg.svd(unfolding, full_matrices=False)
-        u = u[:, :self.rank[0]]
-        R = Q_r @ u
-        G_2 = torch.flatten(torch.permute(core_wav, (1, 0, 2)), 1)
-        G_3 = torch.flatten(torch.permute(core_wav, (2, 0, 1)), 1)
-        G_concat = torch.hstack([G_2, G_3])
-        u, _, _ = torch.linalg.svd(G_concat, full_matrices=False)
-        u = u[:, :self.rank[1]]
-        E = Q_e @ u
-        core = T.k_mode_product(0, R.T).symmetric_modes_product(E.T).full()
-        return SymTucker(core, [R], 2, E)
-
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -71,7 +54,7 @@ class SGDmomentum(Optimizer):
 
         # self.lr, x_k = self.__armijo(closure, x_k, -self.direction)
         x_k = self._add(x_k, -self.direction, self.lr)
-        x_k = self.retraction(x_k)
+        x_k = x_k.round(self.rank)
 
         W.data.add_(x_k.core - W)
         R.data.add_(x_k.common_factors[0] - R)
