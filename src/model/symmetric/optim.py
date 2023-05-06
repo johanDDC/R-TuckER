@@ -79,6 +79,6 @@ class SGDmomentum(Optimizer):
 
     def _add(self, x: SymTucker, direction: SymTucker, alpha):
         temp_core = torch.zeros_like(direction.core, device=direction.core.device)
-        temp_core[:self.rank[0], :self.rank[1], :self.rank[2]] = x.core
+        temp_core[self._rank_slices] = x.core
         sum_core = temp_core + alpha * direction.core
         return SymTucker(sum_core, direction.common_factors, direction.num_symmetric_modes, direction.symmetric_factor)
