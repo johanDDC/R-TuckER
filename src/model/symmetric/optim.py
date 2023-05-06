@@ -54,7 +54,7 @@ class SGDmomentum(Optimizer):
         x_k = SymTucker(W, [R], num_symmetric_modes=2, symmetric_factor=E)
 
         # self.lr, x_k = self.__armijo(closure, x_k, -self.direction)
-        x_k = self._add(x_k, -self.direction, self.lr)
+        x_k = self._add(x_k, -self.direction, self.param_groups[0]["lr"])
         x_k = x_k.round(self.rank)
 
         W.data.add_(x_k.core - W)
