@@ -6,11 +6,11 @@ from src.utils.storage import StateDict
 
 @dataclass
 class TrainConfig:
-    train_batch_size = 64
-    eval_batch_size = 64
+    train_batch_size = 512
+    eval_batch_size = 512
 
-    num_epoches = 200
-    learning_rate = 10_000
+    num_epoches = 70
+    learning_rate = 800
     momentum_beta = 0.9
     label_smoothig = 0.1
 
@@ -33,7 +33,8 @@ class TrainConfig:
 
 @dataclass
 class ModelConfig:
-    manifold_rank = (10, 10, 10)
+    manifold_rank = (50, 50, 50)
+    # manifold_rank = (50, 200, 200)
 
     use_pretrained = False
     pretrained_path = ""
