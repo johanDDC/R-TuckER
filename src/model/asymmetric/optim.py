@@ -72,7 +72,7 @@ class SGDmomentum(Optimizer):
         x_k = Tucker(W, [R, S, O])
 
         # self.lr, x_k = self.__armijo(closure, x_k, -self.direction)
-        x_k = add_and_retract(x_k, -self.direction)(self.param_groups[0]["lr"])
+        x_k = self._add_and_retract(x_k, -self.direction)(self.param_groups[0]["lr"])
 
         W.data.add_(x_k.core - W)
         R.data.add_(x_k.factors[0] - R)
@@ -92,23 +92,22 @@ class SGDmomentum(Optimizer):
         G_sum = group_cores(normalize * dG1 + beta * dG2, x_k.core)
         return Tucker(G_sum, factors)
 
-def add_and_retract(x: Tucker, grad: Tucker):
-    rank = x.rank
-    Qs = [None] * x.ndim
-    Rs = [None] * x.ndim
-    for i in range(x.ndim):
-        Qs[i], Rs[i] = torch.linalg.qr(grad.factors[i])
-
-    def f(alpha):
-        temp_core = torch.zeros_like(grad.core, device=grad.core.device)
-        temp_core[:rank[0], :rank[1], :rank[2]] = x.core
-        sum_core = temp_core + alpha * grad.core
-        inner_tensor = Tucker(sum_core, Rs)
-        inner_tensor = Tucker.full2tuck(inner_tensor.full(), eps=1e-8)
-        factors = [None] * x.ndim
+    def _add_and_retract(self, x: Tucker, grad: Tucker):
+        Qs = [None] * x.ndim
+        Rs = [None] * x.ndim
         for i in range(x.ndim):
-            factors[i] = Qs[i] @ inner_tensor.factors[i]
-            factors[i] = factors[i][:, :rank[i]]
-        return Tucker(inner_tensor.core[:rank[0], :rank[1], :rank[2]], factors)
+            Qs[i], Rs[i] = torch.linalg.qr(grad.factors[i])
 
-    return f
+        def f(alpha):
+            temp_core = torch.zeros_like(grad.core, device=grad.core.device)
+            temp_core[self._rank_slices] = x.core
+            sum_core = temp_core + alpha * grad.core
+            inner_tensor = Tucker(sum_core, Rs)
+            inner_tensor = Tucker.full2tuck(inner_tensor.full(), eps=1e-8)
+            factors = [None] * x.ndim
+            for i in range(x.ndim):
+                factors[i] = Qs[i] @ inner_tensor.factors[i]
+                factors[i] = factors[i][:, :self.rank[i]]
+            return Tucker(inner_tensor.core[self._rank_slices], factors)
+
+        return f
