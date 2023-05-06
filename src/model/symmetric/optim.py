@@ -26,6 +26,7 @@ class SGDmomentum(Optimizer):
         self.momentum = None
         self.direction = None
         self.loss = None
+        self._rank_slices = tuple([slice(0, self.rank[i], None) for i in range(len(self.rank))])
 
     def fit(self, loss_fn, x_k):
         if self.direction is not None:
@@ -62,16 +63,19 @@ class SGDmomentum(Optimizer):
 
     def _add_momentum(self, x_k: SymTucker, grad: SymTucker, momentum: SymTucker, beta: float, grad_norm: float):
         normalize = 1 / grad_norm
-        dG1 = grad.core[:self.rank[0], :self.rank[1], :self.rank[2]]
-        dV1 = grad.common_factors[0][:, self.rank[0]:]
-        dU1 = grad.symmetric_factor[:, self.rank[1]:]
-        dG2 = momentum.core[:self.rank[0], :self.rank[1], :self.rank[2]]
-        dV2 = momentum.common_factors[0][:, self.rank[0]:]
-        dU2 = momentum.symmetric_factor[:, self.rank[1]:]
-        sum_G = group_cores(normalize * dG1 + beta * dG2, x_k.core)
-        sum_V = torch.hstack([x_k.common_factors[0], normalize * dV1 + beta * dV2])
-        sum_U = torch.hstack([x_k.symmetric_factor, normalize * dU1 + beta * dU2])
-        return SymTucker(sum_G, [sum_V], 2, sum_U)
+        dG1 = grad.core[self._rank_slices]
+        dG2 = momentum.core[self._rank_slices]
+        V_sum = []
+        for i in range(x_k.ndim - x_k.num_symmetric_modes):
+            dV1 = grad.common_factors[i][:, self.rank[i]:]
+            dV2 = momentum.common_factors[i][:, self.rank[i]:]
+            dV_sum = normalize * dV1 + beta * dV2
+            V_sum.append(torch.hstack([x_k.common_factors[i], dV_sum]))
+        dU1 = grad.symmetric_factor[:, self.rank[-1]:]
+        dU2 = momentum.symmetric_factor[:, self.rank[-1]:]
+        U_sum = torch.hstack([x_k.symmetric_factor, normalize * dU1 + beta * dU2])
+        G_sum = group_cores(normalize * dG1 + beta * dG2, x_k.core)
+        return SymTucker(G_sum, V_sum, 2, U_sum)
 
     def _add(self, x: SymTucker, direction: SymTucker, alpha):
         temp_core = torch.zeros_like(direction.core, device=direction.core.device)
