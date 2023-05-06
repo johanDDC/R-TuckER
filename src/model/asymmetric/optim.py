@@ -72,7 +72,6 @@ class SGDmomentum(Optimizer):
 
         # self.lr, x_k = self.__armijo(closure, x_k, -self.direction)
         x_k = add_and_retract(x_k, -self.direction)(self.param_groups[0]["lr"])
-        # x_k = self.add_and_retract_momentum(x_k, -self.direction)(self.param_groups[0]["lr"])
 
         W.data.add_(x_k.core - W)
         R.data.add_(x_k.factors[0] - R)
