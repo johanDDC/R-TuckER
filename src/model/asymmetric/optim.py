@@ -25,6 +25,7 @@ class SGDmomentum(Optimizer):
 
         self.momentum = None
         self.direction = None
+        self._rank_slices = tuple([slice(0, self.rank[i], None) for i in range(len(self.rank))])
 
     def fit(self, loss_fn, x_k):
         if self.direction:
@@ -80,19 +81,16 @@ class SGDmomentum(Optimizer):
 
     def _add_momentum(self, x_k, grad: Tucker, momentum: Tucker, beta: float, grad_norm: float):
         normalize = 1 / grad_norm
-        dG1 = grad.core[:self.rank[0], :self.rank[1], :self.rank[2]]
-        dR1 = grad.factors[0][:, self.rank[0]:]
-        dS1 = grad.factors[1][:, self.rank[1]:]
-        dO1 = grad.factors[2][:, self.rank[2]:]
-        dG2 = momentum.core[:self.rank[0], :self.rank[1], :self.rank[2]]
-        dR2 = momentum.factors[0][:, self.rank[0]:]
-        dS2 = momentum.factors[1][:, self.rank[1]:]
-        dO2 = momentum.factors[2][:, self.rank[2]:]
-        sum_G = group_cores(normalize * dG1 + beta * dG2, x_k.core)
-        sum_R = torch.hstack([x_k.common_factors[0], normalize * dR1 + beta * dR2])
-        sum_S = torch.hstack([x_k.symmetric_factor, normalize * dS1 + beta * dS2])
-        sum_O = torch.hstack([x_k.symmetric_factor, normalize * dO1 + beta * dO2])
-        return Tucker(sum_G, [sum_R, sum_S, sum_O])
+        dG1 = grad.core[self._rank_slices]
+        dG2 = momentum.core[self._rank_slices]
+        factors = []
+        for i in range(x_k.ndim):
+            dV1 = grad.factors[i][:, self.rank[i]:]
+            dV2 = momentum.factors[i][:, self.rank[i]:]
+            dV_sum = normalize * dV1 + beta * dV2
+            factors.append(torch.hstack([x_k.common_factors[i], dV_sum]))
+        G_sum = group_cores(normalize * dG1 + beta * dG2, x_k.core)
+        return Tucker(G_sum, factors)
 
 def add_and_retract(x: Tucker, grad: Tucker):
     rank = x.rank
