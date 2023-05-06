@@ -12,6 +12,7 @@ from src.model.symmetric.optim import SGDmomentum
 from src.utils.storage import Losses, Metrics, StateDict
 from tucker_riemopt import set_backend
 from tucker_riemopt.symmetric.tucker import Tucker
+# from tucker_riemopt import Tucker
 
 from src.data.Data import Data
 # from src.model.asymmetric.R_TuckER import R_TuckER
@@ -21,11 +22,13 @@ from src.utils.metrics import metrics
 from configs.base_config import Config
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
 # DEVICE = "cpu"
 # DEVICE = "cpu" if torch.cuda.is_available() else "cpu"
 
 
-def train_one_epoch(model, optimizer, criterion, train_loader):
+def train_one_epoch(model, optimizer, criterion, train_loader, regular_opt=None, batch_scheduler=None):
     model.train()
     dataloader_len = len(train_loader)
     train_loss = torch.zeros((1,), device=DEVICE)
@@ -36,21 +39,23 @@ def train_one_epoch(model, optimizer, criterion, train_loader):
 
             score_fn = model(features[:, 0], features[:, 1])
             loss_fn = lambda T: criterion(score_fn(T), targets)
-            x_k = Tucker(model.core.data, [model.R.weight], symmetric_modes=[1,2], symmetric_factor=model.E.weight)
+            x_k = Tucker(model.core.data, [model.R.weight], num_symmetric_modes=2, symmetric_factor=model.E.weight)
+            # x_k = Tucker(model.core.data, [model.R.weight, model.S.weight, model.O.weight])
 
             grad_norm = optimizer.fit(loss_fn, x_k)
             optimizer.step()
             train_grad_norm += grad_norm.detach()
             train_loss += optimizer.loss.detach()
-            # with torch.no_grad():
-            #     new_loss = loss_fn(Tucker(model.core.data, [model.R.weight], symmetric_modes=[1,2], symmetric_factor=model.E.weight))
-            #     print("old loss", optimizer.loss.item())
-            #     print("new loss", new_loss.item())
-            #     print()
 
-            optimizer.zero_grad()
+            if regular_opt is not None:
+                regular_opt.step()
+                regular_opt.zero_grad(set_to_none=True)
+
+            optimizer.zero_grad(set_to_none=True)
             prbar.set_description(f"{train_loss / (batch_id + 1)},\t{train_grad_norm / (batch_id + 1)}")
             prbar.update(1)
+
+
 
     return train_loss.item() / dataloader_len, train_grad_norm.item() / dataloader_len
 
@@ -71,10 +76,11 @@ def evaluate(model, criterion, dataloader):
         for batch_id, (features, targets) in enumerate(dataloader):
             features, targets = features.to(DEVICE, non_blocking=True), targets.to(DEVICE, non_blocking=True)
             score_fn = model(features[:, 0], features[:, 1])
-            x_k = Tucker(model.core.data, [model.R.weight], symmetric_modes=[1, 2], symmetric_factor=model.E.weight)
+            x_k = Tucker(model.core.data, [model.R.weight], num_symmetric_modes=2, symmetric_factor=model.E.weight)
+            # x_k = Tucker(model.core.data, [model.R.weight, model.S.weight, model.O.weight])
             predictions = score_fn(x_k)
             loss = criterion(predictions, targets)
-            val_loss += loss
+            val_loss += loss.detach()
             filtered_preds, _ = filter_predictions(predictions, targets, features[:, 2].reshape(-1, 1))
             batch_metrics = metrics(filtered_preds, targets)
             for key in batch_metrics.keys():
@@ -88,16 +94,17 @@ def evaluate(model, criterion, dataloader):
 
 
 def train(model, optimizer, train_loader, val_loader, test_loader, config: Config,
-          baselines=None, draw=False) -> StateDict:
+          epoch_scheduler=None, batch_scheduler=None, regular_optimizer=None, baselines=None, draw=False) -> StateDict:
     losses = Losses() if not config.state_dict else config.state_dict.losses
     metrics = Metrics() if not config.state_dict else config.state_dict.metrics
     num_epoches = config.train_cfg.num_epoches
     start_epoch = 1 if not config.state_dict else config.state_dict.last_epoch
 
-    criterion = nn.BCELoss()
+    criterion = nn.BCELoss(reduction="mean")
     prev_val_mrr = evaluate(model, criterion, val_loader)[0]["mrr"]
     for epoch in range(start_epoch, num_epoches + start_epoch):
-        train_loss, train_norm = train_one_epoch(model, optimizer, criterion, train_loader)
+        train_loss, train_norm = train_one_epoch(model, optimizer, criterion, train_loader,
+                                                 batch_scheduler=batch_scheduler, regular_opt=regular_optimizer)
 
         val_metrics, val_loss = evaluate(model, criterion, val_loader)
         test_metrics, test_loss = evaluate(model, criterion, test_loader)
@@ -112,6 +119,9 @@ def train(model, optimizer, train_loader, val_loader, test_loader, config: Confi
         if cur_val_mrr - prev_val_mrr > 5e-4:
             prev_val_mrr = cur_val_mrr
             state.save(config.train_cfg.checkpoint_path, f"rk_{model.rank[1]}")
+
+        if epoch_scheduler is not None:
+            epoch_scheduler.step()
 
         wandb.log({
             "train_loss": state.losses.train[-1],
@@ -130,7 +140,8 @@ def train(model, optimizer, train_loader, val_loader, test_loader, config: Confi
             "test_hits@10": state.metrics.hits_10.test[-1],
             "val_hits@10": state.metrics.hits_10.val[-1],
 
-            "grad_norm": state.losses.norms[-1]
+            "grad_norm": state.losses.norms[-1],
+            "lr": optimizer.param_groups[0]["lr"]
         })
 
     return state
@@ -159,6 +170,13 @@ if __name__ == '__main__':
                       cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate,
                       cfg.train_cfg.momentum_beta, cfg.train_cfg.armijo_slope,
                       cfg.train_cfg.armijo_increase, cfg.train_cfg.armijo_decrease)
+    # opt = SGDmomentum(nn.ParameterList([model.core, model.S.weight, model.R.weight, model.O.weight]),
+    #                   cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate,
+    #                   cfg.train_cfg.momentum_beta, cfg.train_cfg.armijo_slope,
+    #                   cfg.train_cfg.armijo_increase, cfg.train_cfg.armijo_decrease)
+    regular_opt = torch.optim.SGD(model.bn0.parameters(), lr=1e-4, momentum=0.9)
+    epoch_scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, [30, 50], 0.5)
+    # epoch_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, cfg.train_cfg.num_epoches, 100)
 
     train_dataset = KG_dataset(data, data.train_data, label_smoothing=cfg.train_cfg.label_smoothig)
     train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, pin_memory=True,
@@ -173,11 +191,12 @@ if __name__ == '__main__':
                                  num_workers=num_workers)
 
     with wandb.init(project="R_TuckER", entity="johan_ddc_team", config={
-      "model": cfg.model_cfg.to_dict(),
-      "train_params": cfg.train_cfg.to_dict()
-    }, name="symmetric_retraction_test", dir="./wandb_logs", ):
+        "model": cfg.model_cfg.to_dict(),
+        "train_params": cfg.train_cfg.to_dict()
+    }, name="symmetric_fix_30_qr", dir="./wandb_logs", ):
         wandb.watch(model, log="all", log_freq=500)
-        final_state = train(model, opt, train_dataloader, val_dataloader, test_dataloader, cfg, draw=True)
+        final_state = train(model, opt, train_dataloader, val_dataloader, test_dataloader, cfg,
+                            regular_optimizer=regular_opt, epoch_scheduler=epoch_scheduler, draw=True)
 
     print("Final loss value:", final_state.losses.test[-1], sep="\t")
     print("Final mrr value:", final_state.metrics.mrr.test[-1], sep="\t")
