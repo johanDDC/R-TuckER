@@ -2,8 +2,6 @@ import torch
 from torch import nn
 from torch.nn.init import xavier_normal_, xavier_uniform_
 
-from src.utils.layers.BatchNorm import RiemannBatchNorm1d
-from src.utils.layers.Dropout import RiemannFactorDropout
 from tucker_riemopt import Tucker
 
 
@@ -24,13 +22,7 @@ class R_TuckER(nn.Module):
         self.O = nn.Embedding(data_count[0], rank[2])
         self.core = nn.Parameter(torch.zeros(tuple(rank), dtype=torch.float32))
 
-        self.input_dropout = RiemannFactorDropout(0.05)
-
         self.rank = rank
-        self.device = "cpu"
-
-        self.bn0 = RiemannBatchNorm1d(rank[1])
-        self.bn1 = nn.BatchNorm1d(rank[0])
 
     def init(self, state_dict=None):
         if state_dict:
@@ -41,16 +33,18 @@ class R_TuckER(nn.Module):
             xavier_normal_(self.R.weight)
             xavier_normal_(self.O.weight)
 
+            with torch.no_grad():
+                self.S.weight.data = torch.linalg.qr(self.S.weight)[0]
+                self.O.weight.data = torch.linalg.qr(self.O.weight)[0]
+                self.R.weight.data = torch.linalg.qr(self.R.weight)[0]
+
     def forward(self, subject_idx, relation_idx):
         def score_fn(T: Tucker):
             relations = T.factors[0][relation_idx, :]
             subjects = T.factors[1][subject_idx, :]
-            # subjects = self.bn0(subjects)
             preds = torch.einsum("abc,da->dbc", T.core, relations)
             preds = torch.bmm(subjects.view(-1, 1, subjects.shape[1]), preds).view(-1, subjects.shape[1])
-            preds = self.input_dropout(preds)
             preds = preds @ T.factors[2].T
             return torch.sigmoid(preds)
 
         return score_fn
-

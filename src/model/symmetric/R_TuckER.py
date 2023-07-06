@@ -2,7 +2,7 @@ import torch
 from torch import nn
 from torch.nn.init import xavier_normal_, xavier_uniform_
 
-from tucker_riemopt.symmetric.tucker import Tucker
+from tucker_riemopt import SFTucker
 
 
 class R_TuckER(nn.Module):
@@ -22,10 +22,6 @@ class R_TuckER(nn.Module):
         self.core = nn.Parameter(torch.zeros(tuple(rank), dtype=torch.float32))
 
         self.rank = rank
-        self.device = "cpu"
-
-        self.bn0 = nn.BatchNorm1d(rank[1])
-        self.bn1 = nn.BatchNorm1d(rank[0])
 
     def init(self, state_dict=None):
         if state_dict:
@@ -40,12 +36,12 @@ class R_TuckER(nn.Module):
                 self.R.weight.data = torch.linalg.qr(self.R.weight)[0]
 
     def forward(self, subject_idx, relation_idx):
-        def score_fn(T: Tucker):
-            relations = T.common_factors[0][relation_idx, :]
-            subjects = T.symmetric_factor[subject_idx, :]
+        def score_fn(T: SFTucker):
+            relations = T.regular_factors[0][relation_idx, :]
+            subjects = T.shared_factor[subject_idx, :]
             preds = torch.einsum("abc,da->dbc", T.core, relations)
             preds = torch.bmm(subjects.view(-1, 1, subjects.shape[1]), preds).view(-1, subjects.shape[1])
-            preds = preds @ T.symmetric_factor.T
+            preds = preds @ T.shared_factor.T
             return torch.sigmoid(preds)
 
         return score_fn
