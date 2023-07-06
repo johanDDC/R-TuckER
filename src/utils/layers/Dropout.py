@@ -11,7 +11,7 @@ class _RiemannFactorDropout(torch.autograd.Function):
         mask = torch.full((input.shape[0], input.shape[1] // 2), 1 - proba,
                           device=input.device, requires_grad=False)
         mask = torch.bernoulli(mask) / (1 - proba)
-        mask = torch.hstack([mask, torch.ones_like(mask, device=mask.DEVICE)])
+        mask = torch.hstack([mask, torch.ones_like(mask, device=mask.device)])
         ctx.save_for_backward(mask)
         return input * mask
 
