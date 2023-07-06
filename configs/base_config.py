@@ -10,13 +10,14 @@ class TrainConfig:
     eval_batch_size = 512
 
     num_epoches = 70
-    learning_rate = 800
     momentum_beta = 0.9
     label_smoothig = 0.1
+    learning_rate = 800
+    scheduler_step = 0.9958
 
-    armijo_slope = 1e-6
-    armijo_increase = 0.5
-    armijo_decrease = 0.75
+    base_regularization_coeff = 1e-4
+    final_regularization_coeff = 1e-8
+    coeff_adjusting_policy = "exp"
 
     checkpoint_path = "checkpoints/"
 
@@ -48,9 +49,21 @@ class ModelConfig:
 
 
 @dataclass
+class LogConfig:
+    project_name = "R_TuckER"
+    entity_name = "johan_ddc_team"
+    run_name = "test_global_package_fix"
+    log_dir = "wandb_logs"
+
+    watch_log_freq = 500
+    watch_log = "all"
+
+
+@dataclass
 class Config:
     train_cfg = TrainConfig()
     model_cfg = ModelConfig()
+    log_cfg = LogConfig()
 
     state_dict: Union[None, StateDict]
 
