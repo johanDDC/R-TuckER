@@ -18,6 +18,7 @@ class TrainConfig:
     base_regularization_coeff = 1e-4
     final_regularization_coeff = 1e-8
     coeff_adjusting_policy = "exp"
+    num_regularizer_decreasing_steps = 250
 
     checkpoint_path = "checkpoints/"
 

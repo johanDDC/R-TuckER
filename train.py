@@ -181,7 +181,8 @@ if __name__ == '__main__':
                                cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate,
                                cfg.train_cfg.momentum_beta)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, cfg.train_cfg.scheduler_step)
-    regulizer = SimpleDecreasingPolicy(cfg.train_cfg.base_regularization_coeff, cfg.train_cfg.num_epoches,
+    regulizer = SimpleDecreasingPolicy(cfg.train_cfg.base_regularization_coeff,
+                                       cfg.train_cfg.num_regularizer_decreasing_steps,
                                        cfg.train_cfg.final_regularization_coeff, cfg.train_cfg.coeff_adjusting_policy)
 
     train_dataset = KG_dataset(data, data.train_data, label_smoothing=cfg.train_cfg.label_smoothig)
