@@ -17,6 +17,21 @@ from src.utils.metrics import metrics
 from configs.base_config import Config
 
 
+def define_optimizer():
+    if MODE == "symmetric":
+        param_list = nn.ParameterList([model.core, model.E.weight, model.R.weight])
+    else:
+        param_list = nn.ParameterList([model.core, model.S.weight, model.R.weight, model.O.weight])
+    if OPT == "rsgd":
+        opt = RSGDwithMomentum(param_list, cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate,
+                               cfg.train_cfg.momentum_beta)
+    elif OPT == "rgd":
+        opt = RGD(param_list, cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate)
+    else:
+        raise NotImplementedError("Such optimization method is not implemented")
+    return opt
+
+
 def train_one_epoch(model, optimizer, criterion, train_loader, regularization_coeff=1e-4):
     model.train()
     dataloader_len = len(train_loader)
@@ -142,11 +157,12 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, help="Random seed", default=20)
     parser.add_argument('--nw', type=int, help="Num workers", default=6)
     parser.add_argument('--device', type=str, help="Device", default="cuda")
+    parser.add_argument('--optim', type=str, help="Optimizer", default="rsgd")
     args = dict(vars(parser.parse_args()))
-    MODE, SEED, NUM_WORKERS, DEVICE = args["mode"], args["seed"], args["nw"], args["device"]
+    MODE, SEED, NUM_WORKERS, DEVICE, OPT = args["mode"], args["seed"], args["nw"], args["device"], args["optim"]
 
     if MODE == "symmetric":
-        from src.model.symmetric.optim import RSGDwithMomentum
+        from src.model.symmetric.optim import RSGDwithMomentum, RGD
         from tucker_riemopt import SFTucker
         from src.model.symmetric.R_TuckER import R_TuckER
     else:
@@ -172,14 +188,7 @@ if __name__ == '__main__':
     model.init(model_state_dict)
     model.to(DEVICE)
 
-    if MODE == "symmetric":
-        opt = RSGDwithMomentum(nn.ParameterList([model.core, model.E.weight, model.R.weight]),
-                               cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate,
-                               cfg.train_cfg.momentum_beta)
-    else:
-        opt = RSGDwithMomentum(nn.ParameterList([model.core, model.S.weight, model.R.weight, model.O.weight]),
-                               cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate,
-                               cfg.train_cfg.momentum_beta)
+    opt = define_optimizer()
     scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, cfg.train_cfg.scheduler_step)
     regulizer = SimpleDecreasingPolicy(cfg.train_cfg.base_regularization_coeff,
                                        cfg.train_cfg.num_regularizer_decreasing_steps,
