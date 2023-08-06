@@ -30,6 +30,8 @@ class SimpleDecreasingPolicy(IntervalPolicy):
         elif self.strategy == "cos":
             self.step_size = lambda step: self.final_val + (self.base_val - self.final_val) * \
                                           (1 + math.cos(math.pi * step / self.num_steps)) / 2
+        elif self.strategy == "const":
+            self.step_size = 0
         else:
             raise NotImplementedError("This decreasing policy is not supported")
 
@@ -43,4 +45,6 @@ class SimpleDecreasingPolicy(IntervalPolicy):
             self.val *= self.step_size
         elif self.strategy == "cos":
             self.val = self.step_size(self.val)
+        elif self.strategy == "const":
+            self.val += self.step_size
         return self.val
