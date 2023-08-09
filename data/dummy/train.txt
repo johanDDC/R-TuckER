@@ -1,0 +1,3 @@
+/m/01qscs	/award/award_nominee/award_nominations./award/award_nomination/award	/m/02x8n1n
+/m/040db	/base/activism/activist/area_of_activism	/m/0148d
+/m/08966	/travel/travel_destination/climate./travel/travel_destination_monthly_climate/month	/m/05lf_
