@@ -158,8 +158,9 @@ if __name__ == '__main__':
     parser.add_argument('--nw', type=int, help="Num workers", default=6)
     parser.add_argument('--device', type=str, help="Device", default="cuda")
     parser.add_argument('--optim', type=str, help="Optimizer", default="rsgd")
+    parser.add_argument('--data', type=str, help="Dataset path", default="data/FB15k-237/")
     args = dict(vars(parser.parse_args()))
-    MODE, SEED, NUM_WORKERS, DEVICE, OPT = args["mode"], args["seed"], args["nw"], args["device"], args["optim"]
+    MODE, SEED, NUM_WORKERS, DEVICE, OPT, DATA = args["mode"], args["seed"], args["nw"], args["device"], args["optim"], args["data"]
 
     if MODE == "symmetric":
         from src.model.symmetric.optim import RSGDwithMomentum, RGD
@@ -171,7 +172,7 @@ if __name__ == '__main__':
         from tucker_riemopt import Tucker
         from src.model.asymmetric.R_TuckER import R_TuckER
 
-    data = Data(reverse=True)
+    data = Data(DATA, reverse=True)
     set_random_seed(SEED)
     set_backend("pytorch")
     cfg = Config(None)

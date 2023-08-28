@@ -99,14 +99,6 @@ class RSGDwithMomentum(RGD):
         closure: callable
             A closure that reevaluates the model and returns the loss.
         """
-        # W, E, R = self.param_groups[0]["params"]
-        #
-        # x_k = self.direction.linear_comb(-self.param_groups[0]["lr"]).construct()
-        # x_k = x_k.round(self.rank)
-        #
-        # W.data.add_(x_k.core - W)
-        # R.data.add_(x_k.regular_factors[0] - R)
-        # E.data.add_(x_k.shared_factor - E)
         super().step(closure)
 
         self.direction = self.direction.construct()
