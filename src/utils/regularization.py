@@ -48,3 +48,15 @@ class SimpleDecreasingPolicy(IntervalPolicy):
         elif self.strategy == "const":
             self.val += self.step_size
         return self.val
+
+
+class CyclicDecreasingPolicy(SimpleDecreasingPolicy):
+    def __init__(self, base_val, num_steps, final_val, strategy="linear"):
+        super().__init__(base_val, num_steps, final_val, strategy)
+
+    def step(self):
+        val = super().step()
+        if val <= self.final_val:
+            self.val = self.base_val
+            self.cur_step = 0
+        return val
