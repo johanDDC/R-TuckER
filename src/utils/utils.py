@@ -18,7 +18,7 @@ def filter_predictions(predictions, targets, filter):
     predictions[targets == 1] = 0
     targets[targets == 1] = 0
     return predictions.scatter_(1, filter, interest_prediction_vals), \
-           targets.scatter_(1, filter, torch.ones(interest_prediction_vals.shape, device=targets.device))
+        targets.scatter_(1, filter, torch.ones(interest_prediction_vals.shape, device=targets.device))
 
 
 def draw_plots(state: StateDict, baselines=None):
@@ -70,3 +70,30 @@ def draw_plots(state: StateDict, baselines=None):
     clear_output(True)
     plt.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.)
     plt.show()
+
+
+@torch.no_grad()
+def get_rank_approximation(model, new_rank):
+    device = model.E.weight.data.device
+    old_rank = model.core.shape
+
+    Q_R, R_R = torch.qr(model.R.weight.data)
+    new_R = torch.randn((model.R.weight.data.shape[0], new_rank[0]), device=device)
+    new_R[:, :old_rank[0]] = Q_R
+    new_R = torch.linalg.qr(new_R)[0]
+
+    Q_E, R_E = torch.qr(model.E.weight.data)
+    new_E = torch.randn((model.E.weight.data.shape[0], new_rank[1]), device=device)
+    new_E[:, :old_rank[1]] = Q_E
+    new_E = torch.linalg.qr(new_E)[0]
+
+    old_core = torch.einsum("ijk,ia,jb,kc->abc", model.core.data, R_R, R_E, R_E)
+    new_core = torch.zeros((new_rank[0], new_rank[1], new_rank[1]))
+    new_core.uniform_(-1e-5, 1e-5)
+    new_core[:old_rank[0], :old_rank[1], :old_rank[2]] = old_core
+
+    model.E.weight.data = new_E
+    model.R.weight.data = new_R
+    model.core.data = new_core
+    model.rank = new_rank
+    return model
