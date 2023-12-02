@@ -12,10 +12,10 @@ class TrainConfig:
     num_epoches = 500
     momentum_beta = 0.9
     label_smoothig = 0.1
-    learning_rate = 400
+    learning_rate = 2000
     scheduler_step = 0.933
 
-    base_regularization_coeff = 1e-9
+    base_regularization_coeff = 1e-4
     final_regularization_coeff = 1e-10
     coeff_adjusting_policy = "exp"
     num_regularizer_decreasing_steps = 30
@@ -53,7 +53,7 @@ class TuneConfig:
 class ModelConfig:
     manifold_rank = (200, 20, 20)
 
-    use_pretrained = True
+    use_pretrained = False
     pretrained_path = "./checkpoints/rk_20_903"
 
     def to_dict(self):

@@ -19,7 +19,6 @@ class RGD(Optimizer):
 
         self.direction = None
         self.loss = None
-        self._rank_slices = tuple([slice(0, self.rank[i], None) for i in range(len(self.rank))])
 
     def fit(self, loss_fn: Callable[[SFTucker], float], x_k: SFTuckerRiemannian,
             normalize_grad: Union[float, "False"] = 1.):
