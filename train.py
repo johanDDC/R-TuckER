@@ -32,6 +32,38 @@ def define_optimizer(model, cfg):
     return opt
 
 
+def extract_tensor(model: nn.Module):
+    if MODE == "symmetric":
+        x_k = SFTucker(model.core.data, [model.R.weight], num_shared_factors=2, shared_factor=model.E.weight)
+    else:
+        x_k = Tucker(model.core.data, [model.R.weight, model.S.weight, model.O.weight])
+    return x_k
+
+
+def wandb_log(state, **kwargs):
+    wandb.log({
+            "train_loss": state.losses.train[-1],
+            "test_loss": state.losses.test[-1],
+            "val_loss": state.losses.val[-1],
+
+            "test_mrr": state.metrics.mrr.test[-1],
+            "val_mrr": state.metrics.mrr.val[-1],
+
+            "test_hits@1": state.metrics.hits_1.test[-1],
+            "val_hits@1": state.metrics.hits_1.val[-1],
+
+            "test_hits@3": state.metrics.hits_3.test[-1],
+            "val_hits@3": state.metrics.hits_3.val[-1],
+
+            "test_hits@10": state.metrics.hits_10.test[-1],
+            "val_hits@10": state.metrics.hits_10.val[-1],
+
+            "grad_norm": state.losses.norms[-1],
+            **kwargs
+        })
+    
+
+
 def train_one_epoch(model, optimizer, criterion, train_loader, regularization_coeff=1e-4):
     model.train()
     dataloader_len = len(train_loader)
@@ -43,10 +75,7 @@ def train_one_epoch(model, optimizer, criterion, train_loader, regularization_co
 
             score_fn = model(features[:, 0], features[:, 1])
             loss_fn = lambda T: criterion(score_fn(T), targets) + regularization_coeff * T.norm()
-            if MODE == "symmetric":
-                x_k = SFTucker(model.core.data, [model.R.weight], num_shared_factors=2, shared_factor=model.E.weight)
-            else:
-                x_k = Tucker(model.core.data, [model.R.weight, model.S.weight, model.O.weight])
+            x_k = extract_tensor(model)
 
             grad_norm = optimizer.fit(loss_fn, x_k)
             optimizer.step()
@@ -76,14 +105,13 @@ def evaluate(model, criterion, dataloader):
         for batch_id, (features, targets) in enumerate(dataloader):
             features, targets = features.to(DEVICE, non_blocking=True), targets.to(DEVICE, non_blocking=True)
             score_fn = model(features[:, 0], features[:, 1])
-            if MODE == "symmetric":
-                x_k = SFTucker(model.core.data, [model.R.weight], num_shared_factors=2, shared_factor=model.E.weight)
-            else:
-                x_k = Tucker(model.core.data, [model.R.weight, model.S.weight, model.O.weight])
+            x_k = extract_tensor(model)
+            
             predictions = score_fn(x_k)
             loss = criterion(predictions, targets)
             val_loss += loss.detach()
             filtered_preds, _ = filter_predictions(predictions, targets, features[:, 2].reshape(-1, 1))
+            
             batch_metrics = metrics(filtered_preds, targets)
             for key in batch_metrics.keys():
                 val_metrics[key] += batch_metrics[key]
@@ -116,7 +144,7 @@ def train(model, optimizer, train_loader, val_loader, test_loader, config: Confi
         metrics.update(test_metrics, "test")
         losses.update(train_loss, train_norm, val_loss, test_loss)
 
-        state = StateDict(model.state_dict(), losses, metrics, epoch)
+        state = StateDict(model.state_dict(), losses, metrics, epoch, optimizer.state_dict(), scheduler.state_dict())
         state.save(config.train_cfg.checkpoint_path, "snapshot", add_epoch=False)
         cur_val_mrr = val_metrics["mrr"]
         if cur_val_mrr - prev_val_mrr > 5e-4:
@@ -126,26 +154,9 @@ def train(model, optimizer, train_loader, val_loader, test_loader, config: Confi
         if scheduler is not None:
             scheduler.step()
 
-        wandb.log({
-            "train_loss": state.losses.train[-1],
-            "test_loss": state.losses.test[-1],
-            "val_loss": state.losses.val[-1],
-
-            "test_mrr": state.metrics.mrr.test[-1],
-            "val_mrr": state.metrics.mrr.val[-1],
-
-            "test_hits@1": state.metrics.hits_1.test[-1],
-            "val_hits@1": state.metrics.hits_1.val[-1],
-
-            "test_hits@3": state.metrics.hits_3.test[-1],
-            "val_hits@3": state.metrics.hits_3.val[-1],
-
-            "test_hits@10": state.metrics.hits_10.test[-1],
-            "val_hits@10": state.metrics.hits_10.val[-1],
-
-            "grad_norm": state.losses.norms[-1],
-            "lr": optimizer.param_groups[0]["lr"],
-            "reg_coeff": regularization_coeff,
+        wandb_log(state, {
+          "lr": optimizer.param_groups[0]["lr"],
+          "reg_coeff": regularization_coeff,  
         })
 
     return state
@@ -196,24 +207,7 @@ def tune(model, optimizer, train_loader, val_loader, test_loader, config: Config
             if scheduler is not None:
                 scheduler.step()
 
-            wandb.log({
-                "train_loss": state.losses.train[-1],
-                "test_loss": state.losses.test[-1],
-                "val_loss": state.losses.val[-1],
-
-                "test_mrr": state.metrics.mrr.test[-1],
-                "val_mrr": state.metrics.mrr.val[-1],
-
-                "test_hits@1": state.metrics.hits_1.test[-1],
-                "val_hits@1": state.metrics.hits_1.val[-1],
-
-                "test_hits@3": state.metrics.hits_3.test[-1],
-                "val_hits@3": state.metrics.hits_3.val[-1],
-
-                "test_hits@10": state.metrics.hits_10.test[-1],
-                "val_hits@10": state.metrics.hits_10.val[-1],
-
-                "grad_norm": state.losses.norms[-1],
+            wandb_log(state, {
                 "lr": optimizer.param_groups[0]["lr"],
                 "reg_coeff": regularization_coeff,
                 "relation_rank": rank[0],
@@ -244,7 +238,6 @@ if __name__ == '__main__':
         from tucker_riemopt import SFTucker
         from src.model.symmetric.R_TuckER import R_TuckER
     else:
-
         from src.model.asymmetric.optim import RSGDwithMomentum
         from tucker_riemopt import Tucker
         from src.model.asymmetric.R_TuckER import R_TuckER
