@@ -2,7 +2,7 @@ import os
 import torch
 
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Union
 
 
 @dataclass()
@@ -17,6 +17,12 @@ class Losses:
         self.test.append(test_loss)
         self.val.append(val_loss)
         self.norms.append(train_norm)
+
+    def merge(self, other_losses: "Losses"):
+        self.train.extend(other_losses.train)
+        self.test.extend(other_losses.test)
+        self.val.extend(other_losses.val)
+        self.norms.extend(other_losses.norms)
 
 
 @dataclass()
@@ -41,6 +47,16 @@ class Metrics:
         self.hits_3[type].append(metrics_dict["hits@3"])
         self.hits_10[type].append(metrics_dict["hits@10"])
 
+    def merge(self, other_metrics: "Metrics"):
+        self.mrr.val.extend(other_metrics.mrr.val)
+        self.mrr.test.extend(other_metrics.mrr.test)
+        self.hits_1.val.extend(other_metrics.hits_1.val)
+        self.hits_1.test.extend(other_metrics.hits_1.test)
+        self.hits_3.val.extend(other_metrics.hits_3.val)
+        self.hits_3.test.extend(other_metrics.hits_3.test)
+        self.hits_10.val.extend(other_metrics.hits_10.val)
+        self.hits_10.test.extend(other_metrics.hits_10.test)
+
 
 @dataclass()
 class StateDict:
@@ -48,6 +64,8 @@ class StateDict:
     losses: Losses
     metrics: Metrics
     last_epoch: int
+    optimizer: Union[dict, None]
+    scheduler: Union[dict, None]
 
     def save(self, dir, name, add_epoch=True):
         filename = name + (f"_{self.last_epoch}" if add_epoch else "") + ".pth"

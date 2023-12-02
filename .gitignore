@@ -1,5 +1,7 @@
 .idea/
+**/__pycache__
 
 venv/
 
-checpoints/
+checkpoints/
+tucker_riemopt/
