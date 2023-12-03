@@ -78,12 +78,11 @@ class RSGDwithMomentum(RGD):
         if self.direction is not None:
             self.momentum = SFTuckerRiemannian.project(x_k, self.direction)
         else:
-            self.momentum = SFTuckerRiemannian.TangentVector(x_k, torch.zeros_like(x_k.core))
+            self.momentum = SFTuckerRiemannian.TangentVector(x_k,  torch.zeros_like(x_k.core))
         rgrad, self.loss = SFTuckerRiemannian.grad(loss_fn, x_k)
-        rgrad_norm = rgrad.construct().norm(qr_based=True).detach()
+        rgrad_norm = rgrad.norm().detach()
         normalize_grad = rgrad_norm if not normalize_grad else normalize_grad
-        self.direction = rgrad.linear_comb(1 / rgrad_norm * normalize_grad, self.momentum_beta,
-                                           self.momentum)
+        self.direction = (1 / rgrad_norm * normalize_grad) * rgrad + self.momentum_beta * self.momentum
         return rgrad_norm
 
     @torch.no_grad()
@@ -97,8 +96,10 @@ class RSGDwithMomentum(RGD):
         """
         W, E, R = self.param_groups[0]["params"]
 
-        x_k = self.direction.linear_comb(-self.param_groups[0]["lr"]).construct()
-        x_k = x_k.round(self.rank)
+        # x_k = self.direction.linear_comb(-self.param_groups[0]["lr"]).construct()
+        x_k = self.direction.point
+        x_k = (-self.param_groups[0]["lr"]) * self.direction + SFTuckerRiemannian.TangentVector(x_k)
+        x_k = x_k.construct().round(self.rank)
         self.direction = self.direction.construct()
 
         W.data.add_(x_k.core - W)
