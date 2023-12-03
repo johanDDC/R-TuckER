@@ -51,7 +51,7 @@ class TuneConfig:
 
 @dataclass
 class ModelConfig:
-    manifold_rank = (200, 20, 20)
+    manifold_rank = (10, 200, 200)
 
     use_pretrained = False
     pretrained_path = "./checkpoints/rk_20_903"

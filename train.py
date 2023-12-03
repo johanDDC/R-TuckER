@@ -12,7 +12,7 @@ from tucker_riemopt import set_backend
 from src.data.Dataset import KG_dataset
 from src.utils.storage import Losses, Metrics, StateDict
 from src.data.Data import Data
-from src.utils.utils import set_random_seed, filter_predictions, get_rank_approximation
+from src.utils.utils import set_random_seed, filter_predictions, get_rank_approximation, Timer
 from src.utils.metrics import metrics
 from configs.base_config import Config
 
@@ -74,7 +74,7 @@ def train_one_epoch(model, optimizer, criterion, train_loader, regularization_co
             features, targets = features.to(DEVICE, non_blocking=True), targets.to(DEVICE, non_blocking=True)
 
             score_fn = model(features[:, 0], features[:, 1])
-            loss_fn = lambda T: criterion(score_fn(T), targets) + regularization_coeff * T.norm()
+            loss_fn = lambda T: criterion(score_fn(T), targets)# + regularization_coeff * T.norm()
             x_k = extract_tensor(model)
 
             grad_norm = optimizer.fit(loss_fn, x_k)
@@ -125,6 +125,7 @@ def evaluate(model, criterion, dataloader):
 
 def train(model, optimizer, train_loader, val_loader, test_loader, config: Config, regulizer: RegularizationCoeffPolicy,
           scheduler=None, ) -> StateDict:
+    timer = Timer()
     losses = Losses() if not config.state_dict else config.state_dict.losses
     metrics = Metrics() if not config.state_dict else config.state_dict.metrics
     num_epoches = config.train_cfg.num_epoches
@@ -134,11 +135,15 @@ def train(model, optimizer, train_loader, val_loader, test_loader, config: Confi
     prev_val_mrr = evaluate(model, criterion, val_loader)[0]["mrr"]
     for epoch in range(start_epoch, num_epoches + start_epoch):
         regularization_coeff = regulizer.step()
-        train_loss, train_norm = train_one_epoch(model, optimizer, criterion, train_loader,
-                                                 regularization_coeff=regularization_coeff)
+        with timer:
+            train_loss, train_norm = train_one_epoch(model, optimizer, criterion, train_loader,
+                                                    regularization_coeff=regularization_coeff)
+        epoch_time = timer.time
 
         val_metrics, val_loss = evaluate(model, criterion, val_loader)
-        test_metrics, test_loss = evaluate(model, criterion, test_loader)
+        with timer:
+            test_metrics, test_loss = evaluate(model, criterion, test_loader)
+        eval_time = timer.time
 
         metrics.update(val_metrics, "val")
         metrics.update(test_metrics, "test")
@@ -154,10 +159,8 @@ def train(model, optimizer, train_loader, val_loader, test_loader, config: Confi
         if scheduler is not None:
             scheduler.step()
 
-        wandb_log(state, {
-          "lr": optimizer.param_groups[0]["lr"],
-          "reg_coeff": regularization_coeff,  
-        })
+        wandb_log(state, lr=optimizer.param_groups[0]["lr"], reg_coeff=regularization_coeff,
+                  epoch_time=epoch_time, eval_time=eval_time)
 
     return state
 
@@ -207,12 +210,8 @@ def tune(model, optimizer, train_loader, val_loader, test_loader, config: Config
             if scheduler is not None:
                 scheduler.step()
 
-            wandb_log(state, {
-                "lr": optimizer.param_groups[0]["lr"],
-                "reg_coeff": regularization_coeff,
-                "relation_rank": rank[0],
-                "entity_rank": rank[1]
-            })
+            wandb_log(state, lr=optimizer.param_groups[0]["lr"], reg_coeff=regularization_coeff,
+                      relation_rank=rank[0], entity_rank=rank[1])
 
     return state
 
@@ -295,7 +294,7 @@ if __name__ == '__main__':
                                 regulizer=regulizer, scheduler=scheduler)
         else:
             final_state = tune(model, opt, train_dataloader, val_dataloader, test_dataloader, cfg,
-                               regulizer=regulizer, scheduler=scheduler)
+                                regulizer=regulizer, scheduler=scheduler)
 
     print("Final loss value:", final_state.losses.test[-1], sep="\t")
     print("Final mrr value:", final_state.metrics.mrr.test[-1], sep="\t")
