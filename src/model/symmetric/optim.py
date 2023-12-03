@@ -32,14 +32,11 @@ class RGD(Optimizer):
                 :return: Frobenius norm of the Riemannian gradient.
                 """
         rgrad, self.loss = SFTuckerRiemannian.grad(loss_fn, x_k)
-        rgrad_norm = rgrad.construct().norm(qr_based=True).detach()
+        rgrad_norm = rgrad.norm().detach()
         normalize_grad = rgrad_norm if not normalize_grad else normalize_grad
         normalizer = 1 / rgrad_norm * normalize_grad
 
-        regular_factors = [normalizer * rgrad.delta_regular_factors[i] for i in range(rgrad.point.dt)]
-        shared_factor = normalizer * rgrad.delta_shared_factor
-        core = normalizer * rgrad.delta_core
-        self.direction = TangentVector(rgrad.point, core, regular_factors, shared_factor)
+        self.direction = normalizer * rgrad
         return rgrad_norm
 
     @torch.no_grad()
