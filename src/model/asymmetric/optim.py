@@ -19,7 +19,7 @@ class RGD(Optimizer):
         self.direction = None
         self.loss = None
 
-    def fit(self, loss_fn: Callable[[SFTucker], float], x_k: Tucker,
+    def fit(self, loss_fn: Callable[[Tucker], float], x_k: Tucker,
             normalize_grad: Union[float, "False"] = 1.):
         """Computes the Riemannian gradient of `loss_fn` at point `x_k`.
 
