@@ -50,8 +50,9 @@ class RGD(Optimizer):
         """
         W, E, R = self.param_groups[0]["params"]
 
-        x_k = self.direction.linear_comb(-self.param_groups[0]["lr"]).construct()
-        x_k = x_k.round(self.rank)
+        x_k = self.direction.point
+        x_k = (-self.param_groups[0]["lr"]) * self.direction + SFTuckerRiemannian.TangentVector(x_k)
+        x_k = x_k.construct().round(self.rank)
 
         W.data.add_(x_k.core - W)
         R.data.add_(x_k.regular_factors[0] - R)
@@ -96,7 +97,6 @@ class RSGDwithMomentum(RGD):
         """
         W, E, R = self.param_groups[0]["params"]
 
-        # x_k = self.direction.linear_comb(-self.param_groups[0]["lr"]).construct()
         x_k = self.direction.point
         x_k = (-self.param_groups[0]["lr"]) * self.direction + SFTuckerRiemannian.TangentVector(x_k)
         x_k = x_k.construct().round(self.rank)
