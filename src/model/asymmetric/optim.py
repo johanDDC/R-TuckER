@@ -87,10 +87,9 @@ class RSGDwithMomentum(Optimizer):
         else:
             self.momentum = TuckerRiemannian.TangentVector(x_k, torch.zeros_like(x_k.core))
         rgrad, self.loss = TuckerRiemannian.grad(loss_fn, x_k)
-        rgrad_norm = rgrad.construct().norm(qr_based=True).detach()
+        rgrad_norm = rgrad.norm().detach()
         normalize_grad = rgrad_norm if not normalize_grad else normalize_grad
-        self.direction = rgrad.linear_comb(1 / rgrad_norm * normalize_grad, self.momentum_beta,
-                                           self.momentum)
+        self.direction = (1 / rgrad_norm * normalize_grad) * rgrad + self.momentum_beta * self.momentum
         return rgrad_norm
 
     @torch.no_grad()
@@ -107,10 +106,9 @@ class RSGDwithMomentum(Optimizer):
         x_k = self.direction.point
         x_k = (-self.param_groups[0]["lr"]) * self.direction + TuckerRiemannian.TangentVector(x_k)
         x_k = x_k.construct().round(self.rank)
+        self.direction = self.direction.construct()
 
         W.data.add_(x_k.core - W)
         R.data.add_(x_k.factors[0] - R)
         S.data.add_(x_k.factors[1] - S)
         O.data.add_(x_k.factors[2] - O)
-
-        self.direction = self.direction.construct()
