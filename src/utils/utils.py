@@ -2,6 +2,7 @@ import torch
 import numpy as np
 
 from src.utils.storage import StateDict
+from time import perf_counter
 
 
 def set_random_seed(seed):
@@ -97,3 +98,13 @@ def get_rank_approximation(model, new_rank):
     model.core.data = new_core
     model.rank = new_rank
     return model
+
+
+class Timer:
+    def __enter__(self):
+        self.start = perf_counter()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        torch.cuda.synchronize()
+        self.time = perf_counter() - self.start
+        
