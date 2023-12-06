@@ -107,7 +107,7 @@ class RSGDwithMomentum(RGD):
         E.data.add_(x_k.shared_factor - E)
 
 
-class SFTuckerAdam(RGD):
+class RiemannianAdam(RGD):
     def __init__(self, params, rank, max_lr, betas=(0.9, 0.999), eps=1e-8, step_velocity=1):
         super().__init__(params, rank, max_lr)
         self.betas = betas
@@ -119,7 +119,7 @@ class SFTuckerAdam(RGD):
         
         self.step_t = 1
 
-    def fit(self, loss_fn: Callable[[SFTucker], float], x_k: SFTuckerRiemannian,
+    def fit(self, loss_fn: Callable[[SFTucker], float], x_k: SFTucker,
             normalize_grad: Union[float, "False"] = 1.):
         """
         Computes the Riemannian gradient of `loss_fn` at point `x_k`.
