@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "r-tucker"
+version = "0.0.1"
+description = "Tucker-decomposition based model for knowledge graph link prediction"
+authors = ["johanddc <ivan.peshekhonov@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "r_tucker"}]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+torch = "^1.13"
+tucker_riemopt = "^1.0.1"
+
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

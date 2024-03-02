@@ -48,10 +48,9 @@ Also use the following command line options:
 
 This implementation requires the following packages
 
->numpy>=1.23.1  
 torch==1.13.1
 
-Also custom library [`tucker_riemopt`](https://github.com/johanDDC/tucker_riemopt) is required.
+Also custom library [`tucker_riemopt`](https://github.com/johanDDC/tucker_riemopt) of version at least 1.0.1 is required.
 
 ### References
 
