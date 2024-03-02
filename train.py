@@ -6,7 +6,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.utils.regularization import SimpleDecreasingPolicy, RegularizationCoeffPolicy, CyclicDecreasingPolicy
+from src.utils.regularization import SimpleDecreasingPolicy, RegularizationCoeffPolicy, CyclicDecreasingPolicy, SimpleIncreasingPolicy
 from tucker_riemopt import set_backend
 
 from src.data.Dataset import KG_dataset
@@ -28,8 +28,7 @@ def define_optimizer(model, cfg):
     elif OPT == "rgd":
         opt = RGD(param_list, cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate)
     elif OPT == "adam":
-        opt = SFTuckerAdam(param_list, cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate, step_velocity=1)
-        SFTuckerAdam
+        opt = RiemannianAdam(param_list, cfg.model_cfg.manifold_rank, cfg.train_cfg.learning_rate, step_velocity=1)
     else:
         raise NotImplementedError("Such optimization method is not implemented")
     return opt
@@ -77,7 +76,7 @@ def train_one_epoch(model, optimizer, criterion, train_loader, regularization_co
             features, targets = features.to(DEVICE, non_blocking=True), targets.to(DEVICE, non_blocking=True)
 
             score_fn = model(features[:, 0], features[:, 1])
-            loss_fn = lambda T: criterion(score_fn(T), targets)# + regularization_coeff * T.norm()
+            loss_fn = lambda T: criterion(score_fn(T), targets) + regularization_coeff * T.norm() ** 2
             x_k = extract_tensor(model)
 
             grad_norm = optimizer.fit(loss_fn, x_k)
@@ -185,11 +184,11 @@ if __name__ == '__main__':
         args["mode"], args["seed"], args["nw"], args["device"], args["optim"], args["data"]
 
     if MODE == "symmetric":
-        from src.model.symmetric.optim import RSGDwithMomentum, RGD, SFTuckerAdam
+        from src.model.symmetric.optim import RSGDwithMomentum, RGD, RiemannianAdam
         from tucker_riemopt import SFTucker
         from src.model.symmetric.R_TuckER import R_TuckER
     else:
-        from src.model.asymmetric.optim import RSGDwithMomentum
+        from src.model.asymmetric.optim import RSGDwithMomentum, RGD, RiemannianAdam
         from tucker_riemopt import Tucker
         from src.model.asymmetric.R_TuckER import R_TuckER
 
@@ -211,11 +210,18 @@ if __name__ == '__main__':
     model.to(DEVICE)
 
     opt = define_optimizer(model, cfg)
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, cfg.train_cfg.scheduler_step)
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=600, total_steps=cfg.train_cfg.num_epoches, 
+                                                    pct_start=100/cfg.train_cfg.num_epoches, div_factor=5.5, cycle_momentum=False,
+                                                    anneal_strategy="linear")
+
     regulizer = SimpleDecreasingPolicy(cfg.train_cfg.base_regularization_coeff,
                                         cfg.train_cfg.num_regularizer_decreasing_steps,
                                         cfg.train_cfg.final_regularization_coeff,
                                         cfg.train_cfg.coeff_adjusting_policy)
+    # regulizer = SimpleIncreasingPolicy(cfg.train_cfg.base_regularization_coeff,
+    #                                    cfg.train_cfg.num_regularizer_decreasing_steps,
+    #                                    cfg.train_cfg.final_regularization_coeff,
+    #                                    cfg.train_cfg.coeff_adjusting_policy)
 
     train_dataset = KG_dataset(data, data.train_data, label_smoothing=cfg.train_cfg.label_smoothig)
     train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, pin_memory=True,
@@ -235,12 +241,8 @@ if __name__ == '__main__':
         "tune": cfg.tune_cfg.to_dict()
     }, name=cfg.log_cfg.run_name, dir=cfg.log_cfg.log_dir):
         wandb.watch(model, log=cfg.log_cfg.watch_log, log_freq=cfg.log_cfg.watch_log_freq)
-        if not TUNE:
-            final_state = train(model, opt, train_dataloader, val_dataloader, test_dataloader, cfg,
-                                regulizer=regulizer, scheduler=scheduler)
-        else:
-            final_state = tune(model, opt, train_dataloader, val_dataloader, test_dataloader, cfg,
-                                regulizer=regulizer, scheduler=scheduler)
+        final_state = train(model, opt, train_dataloader, val_dataloader, test_dataloader, cfg,
+                            regulizer=regulizer, scheduler=scheduler)
 
     print("Final loss value:", final_state.losses.test[-1], sep="\t")
     print("Final mrr value:", final_state.metrics.mrr.test[-1], sep="\t")

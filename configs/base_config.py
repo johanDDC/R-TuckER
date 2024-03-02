@@ -10,15 +10,19 @@ class TrainConfig:
     eval_batch_size = 512
 
     num_epoches = 500
-    momentum_beta = 0.9
+    momentum_beta = 0.8
     label_smoothig = 0.1
     learning_rate = 2000
-    scheduler_step = 0.933
+    # scheduler_step = 0.999
+    scheduler_step = 0.995
 
-    base_regularization_coeff = 1e-4
-    final_regularization_coeff = 1e-10
-    coeff_adjusting_policy = "exp"
-    num_regularizer_decreasing_steps = 30
+    base_regularization_coeff = 1e-11
+    final_regularization_coeff = 1e-16
+    coeff_adjusting_policy = "linear"
+    # base_regularization_coeff = 1e-8
+    # final_regularization_coeff = 1e-11
+    # coeff_adjusting_policy = "exp"
+    num_regularizer_decreasing_steps = 300
 
     checkpoint_path = "checkpoints/"
 
@@ -30,6 +34,11 @@ class TrainConfig:
             "learning_rate": self.learning_rate,
             "momentum_beta": self.momentum_beta,
             "label_smoothig": self.label_smoothig,
+            "scheduler_step": self.scheduler_step,
+            "base_regularization_coeff": self.base_regularization_coeff,
+            "final_regularization_coeff": self.final_regularization_coeff,
+            "coeff_adjusting_policy": self.coeff_adjusting_policy,
+            "num_regularizer_decreasing_steps": self.num_regularizer_decreasing_steps
         }
 
 
@@ -51,7 +60,7 @@ class TuneConfig:
 
 @dataclass
 class ModelConfig:
-    manifold_rank = (10, 200, 200)
+    manifold_rank = (200, 100, 100)
 
     use_pretrained = False
     pretrained_path = "./checkpoints/rk_20_903"
@@ -68,7 +77,7 @@ class ModelConfig:
 class LogConfig:
     project_name = "R_TuckER"
     entity_name = "johan_ddc_team"
-    run_name = "(200, 20) 10, 5 tune"
+    run_name = "(100, 200) FB15k-237 RTuckER square reg"
     log_dir = "wandb_logs"
 
     watch_log_freq = 500
