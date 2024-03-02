@@ -19,8 +19,8 @@ Note that unlike TuckER model, this approach doesn't employ such common DL techn
 
 Dataset | MRR | Hits@10 | Hits@3 | Hits@1
 :--- | :---: | :---: | :---: | :---:
-WN18RR | 0.477 | 0.544 | 0.492 | 0.446
-FB15k-237 | 0.329 | 0.502 | 0.359 | 0.242
+WN18RR | 0.479 | 0.546 | 0.492 | 0.446
+FB15k-237 | 0.329 | 0.505 | 0.359 | 0.242
 
 ### Running a model
 
