@@ -168,57 +168,6 @@ def train(model, optimizer, train_loader, val_loader, test_loader, config: Confi
     return state
 
 
-def tune(model, optimizer, train_loader, val_loader, test_loader, config: Config, regulizer: RegularizationCoeffPolicy,
-         scheduler=None, ) -> StateDict:
-    losses = Losses() if not config.state_dict else config.state_dict.losses
-    metrics = Metrics() if not config.state_dict else config.state_dict.metrics
-    tune_cfg = config.tune_cfg
-    num_runs = tune_cfg.num_tunning_runs
-    num_epoches = tune_cfg.num_run_epochs
-    start_epoch = 1
-
-    criterion = nn.BCELoss(reduction="mean")
-    prev_val_mrr = evaluate(model, criterion, val_loader)[0]["mrr"]
-    rank = list(config.model_cfg.manifold_rank)
-    for run in range(1, num_runs + 1):
-        rank[0] += tune_cfg.relation_rank_inc
-        rank[1] += tune_cfg.entity_rank_inc
-        rank[2] += tune_cfg.entity_rank_inc
-        model = get_rank_approximation(model, rank)
-        optimizer = define_optimizer(model, config)
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, config.train_cfg.scheduler_step) \
-            if scheduler is not None else None
-        optimizer.rank = rank
-        optimizer.momentum = optimizer.direction = None
-        model.to(DEVICE)
-        for epoch in range(start_epoch, num_epoches + start_epoch):
-            regularization_coeff = regulizer.step()
-            train_loss, train_norm = train_one_epoch(model, optimizer, criterion, train_loader,
-                                                     regularization_coeff=regularization_coeff)
-
-            val_metrics, val_loss = evaluate(model, criterion, val_loader)
-            test_metrics, test_loss = evaluate(model, criterion, test_loader)
-
-            metrics.update(val_metrics, "val")
-            metrics.update(test_metrics, "test")
-            losses.update(train_loss, train_norm, val_loss, test_loss)
-
-            state = StateDict(model.state_dict(), losses, metrics, epoch)
-            state.save(config.train_cfg.checkpoint_path, "snapshot", add_epoch=False)
-            cur_val_mrr = val_metrics["mrr"]
-            if cur_val_mrr - prev_val_mrr > 5e-4:
-                prev_val_mrr = cur_val_mrr
-                state.save(config.train_cfg.checkpoint_path, f"tune_run_{run}")
-
-            if scheduler is not None:
-                scheduler.step()
-
-            wandb_log(state, lr=optimizer.param_groups[0]["lr"], reg_coeff=regularization_coeff,
-                      relation_rank=rank[0], entity_rank=rank[1])
-
-    return state
-
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', type=str, help="Model type", required=True)
@@ -232,8 +181,8 @@ if __name__ == '__main__':
     tune_parser.add_argument('--notune', dest="tune", action='store_false', help="Do not use rank tunning")
     parser.set_defaults(tune=False)
     args = dict(vars(parser.parse_args()))
-    MODE, SEED, NUM_WORKERS, DEVICE, OPT, DATA, TUNE = \
-        args["mode"], args["seed"], args["nw"], args["device"], args["optim"], args["data"], args["tune"]
+    MODE, SEED, NUM_WORKERS, DEVICE, OPT, DATA = \
+        args["mode"], args["seed"], args["nw"], args["device"], args["optim"], args["data"]
 
     if MODE == "symmetric":
         from src.model.symmetric.optim import RSGDwithMomentum, RGD, SFTuckerAdam
@@ -263,16 +212,10 @@ if __name__ == '__main__':
 
     opt = define_optimizer(model, cfg)
     scheduler = torch.optim.lr_scheduler.ExponentialLR(opt, cfg.train_cfg.scheduler_step)
-    if TUNE:
-        regulizer = CyclicDecreasingPolicy(cfg.train_cfg.base_regularization_coeff,
-                                           cfg.train_cfg.num_regularizer_decreasing_steps,
-                                           cfg.train_cfg.final_regularization_coeff,
-                                           cfg.train_cfg.coeff_adjusting_policy)
-    else:
-        regulizer = SimpleDecreasingPolicy(cfg.train_cfg.base_regularization_coeff,
-                                           cfg.train_cfg.num_regularizer_decreasing_steps,
-                                           cfg.train_cfg.final_regularization_coeff,
-                                           cfg.train_cfg.coeff_adjusting_policy)
+    regulizer = SimpleDecreasingPolicy(cfg.train_cfg.base_regularization_coeff,
+                                        cfg.train_cfg.num_regularizer_decreasing_steps,
+                                        cfg.train_cfg.final_regularization_coeff,
+                                        cfg.train_cfg.coeff_adjusting_policy)
 
     train_dataset = KG_dataset(data, data.train_data, label_smoothing=cfg.train_cfg.label_smoothig)
     train_dataloader = DataLoader(train_dataset, batch_size=train_batch_size, shuffle=True, pin_memory=True,
