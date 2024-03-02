@@ -50,6 +50,24 @@ class SimpleDecreasingPolicy(IntervalPolicy):
         return self.val
 
 
+class SimpleIncreasingPolicy(IntervalPolicy):
+    def __init__(self, base_val, num_steps, final_val, strategy="linear"):
+        super().__init__(base_val, num_steps, final_val)
+        self.strategy = strategy
+        if self.strategy == "linear":
+            self.step_size = (final_val - base_val) / num_steps
+        else:
+            raise NotImplementedError("This increasing policy is not supported")
+
+    def step(self):
+        self.cur_step += 1
+        if self.val >= self.final_val:
+            return self.val
+        if self.strategy == "linear":
+            self.val += self.step_size
+        return self.val
+    
+
 class CyclicDecreasingPolicy(SimpleDecreasingPolicy):
     def __init__(self, base_val, num_steps, final_val, strategy="linear"):
         super().__init__(base_val, num_steps, final_val, strategy)
